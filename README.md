@@ -8,6 +8,7 @@
 
 [![MIT License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 ![Node 22+](https://img.shields.io/badge/node-%3E%3D22-brightgreen)
+[![Discord](https://img.shields.io/discord/1474924531683688478?color=5865F2&logo=discord&logoColor=white&label=Discord)](https://discord.gg/Sh9ZGtctva)
 
 </div>
 
@@ -34,7 +35,7 @@ Messaging channels are great for chatting. But you can't watch charts render in 
 ## What makes it different
 
 ### Voice that actually works
-Talk to your agent. It talks back. Wake-word activation, local Whisper transcription (no API key needed), multi-provider TTS with Edge, OpenAI, and Replicate. Not a gimmick, a daily driver.
+Talk to your agent. It talks back. Wake-word activation, on-device Whisper transcription with model selection (tiny, base, small) and GPU detection — no API key needed. Multi-provider TTS with Edge, OpenAI, and Replicate. Not a gimmick, a daily driver.
 
 ### Live charts from a chat message
 Your agent can drop interactive TradingView charts, candlestick plots, and data visualizations directly into the conversation. Say "show me gold this year" and get a real chart, not a code block.
@@ -56,6 +57,11 @@ Create recurring jobs and one-shot reminders. Every scheduled run shows up as it
 | **Monitoring** | Token usage, context window meter, cost tracking, activity logs |
 | **Command palette** | Cmd+K to search, switch sessions, change models. Keyboard-first |
 | **Search** | Full-text search across all messages in the current session |
+| **Images** | Paste from clipboard, drag & drop files, full-screen lightbox with download |
+| **Skills browser** | Browse installed skills, check status and requirements from the workspace panel |
+| **Local STT** | On-device Whisper — tiny, base, or small models with GPU detection and auto-download. No API key needed |
+| **Code actions** | Copy or save-to-file buttons on every code block |
+| **API key management** | Add provider keys from settings — writes to .env and hot-reloads, no restart needed |
 | **14 themes** | Dark, light, and everything in between. Resizable panels, custom fonts |
 
 ## Get Started
@@ -124,6 +130,10 @@ See [Security](docs/SECURITY.md) for the full threat model.
 | **[API](docs/API.md)** | REST and WebSocket endpoints |
 | **[Contributing](CONTRIBUTING.md)** | Dev setup, code style, PRs |
 | **[Troubleshooting](docs/TROUBLESHOOTING.md)** | Common issues and fixes |
+
+## Community
+
+Join the [Nerve Discord](https://discord.gg/Sh9ZGtctva) — get help, share your setup, report bugs, and follow development.
 
 ## License
 
