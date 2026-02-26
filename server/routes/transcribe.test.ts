@@ -16,16 +16,18 @@ describe('transcribe routes', () => {
     openaiKey?: string;
     language?: string;
   } = {}) {
+    const mockConfig: Record<string, unknown> = {
+      auth: false, port: 3000, host: '127.0.0.1', sslPort: 3443,
+      sttProvider: overrides.sttProvider || 'local',
+      openaiApiKey: overrides.openaiKey || '',
+      replicateApiToken: '',
+      language: overrides.language || 'en',
+      edgeVoiceGender: 'female',
+      limits: { transcribe: 12 * 1024 * 1024 },
+    };
     vi.doMock('../lib/config.js', () => ({
-      config: {
-        auth: false, port: 3000, host: '127.0.0.1', sslPort: 3443,
-        sttProvider: overrides.sttProvider || 'local',
-        openaiApiKey: overrides.openaiKey || '',
-        replicateApiToken: '',
-        language: overrides.language || 'en',
-        edgeVoiceGender: 'female',
-        limits: { transcribe: 12 * 1024 * 1024 },
-      },
+      config: mockConfig,
+      updateConfig: (key: string, value: unknown) => { mockConfig[key] = value; },
       SESSION_COOKIE_NAME: 'nerve_session_3000',
     }));
     vi.doMock('../middleware/rate-limit.js', () => ({

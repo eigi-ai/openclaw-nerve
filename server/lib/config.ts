@@ -107,6 +107,58 @@ export const config = {
   sessionTtlMs: Number(process.env.NERVE_SESSION_TTL || 30 * 24 * 60 * 60 * 1000), // 30 days
 } as const;
 
+// ─── Typed config mutation ──────────────────────────────────────────────────
+
+/** Keys that may be mutated at runtime and their accepted types. */
+type MutableConfigMap = {
+  sttProvider: 'local' | 'openai';
+  language: string;
+  edgeVoiceGender: 'female' | 'male';
+  sessionSecret: string;
+};
+
+/**
+ * Centralized, type-safe config mutation.
+ *
+ * Only the four known mutable keys are accepted; values are validated at
+ * runtime before the write so callers can never silently corrupt config.
+ * The single `Record<string, unknown>` cast is confined to this function.
+ */
+export function updateConfig<K extends keyof MutableConfigMap>(
+  key: K,
+  value: MutableConfigMap[K],
+): void {
+  switch (key) {
+    case 'sttProvider':
+      if (value !== 'local' && value !== 'openai') {
+        throw new Error(`Invalid sttProvider: ${value}. Must be 'local' or 'openai'`);
+      }
+      break;
+    case 'language':
+      if (typeof value !== 'string' || !SUPPORTED_LANGUAGE_CODES.has(value)) {
+        throw new Error(`Invalid language: ${value}. Must be a supported ISO 639-1 code`);
+      }
+      break;
+    case 'edgeVoiceGender':
+      if (value !== 'female' && value !== 'male') {
+        throw new Error(`Invalid edgeVoiceGender: ${value}. Must be 'female' or 'male'`);
+      }
+      break;
+    case 'sessionSecret':
+      if (typeof value !== 'string' || value.length === 0) {
+        throw new Error('sessionSecret must be a non-empty string');
+      }
+      break;
+    default: {
+      // Exhaustiveness check — if we ever add a key to MutableConfigMap
+      // without handling it, TypeScript will flag this line.
+      const _exhaustive: never = key;
+      throw new Error(`Cannot mutate config key: ${_exhaustive}`);
+    }
+  }
+  (config as Record<string, unknown>)[key] = value;
+}
+
 /** Session cookie name — suffixed with port to avoid collisions when running multiple instances. */
 export const SESSION_COOKIE_NAME = `nerve_session_${config.port}`;
 
@@ -179,7 +231,7 @@ export function validateConfig(): void {
     // Auto-generate session secret if missing
     const secret = crypto.randomBytes(32).toString('hex');
     console.warn('[config] ⚠ NERVE_SESSION_SECRET not set — generated ephemeral secret (sessions won\'t survive restarts)');
-    (config as Record<string, unknown>).sessionSecret = secret;
+    updateConfig('sessionSecret', secret);
   }
 
   if (config.host === '0.0.0.0' && !config.auth) {

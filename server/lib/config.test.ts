@@ -258,4 +258,90 @@ describe('config module', () => {
       errorSpy.mockRestore();
     });
   });
+
+  describe('updateConfig', () => {
+    it('updates sttProvider to openai', async () => {
+      const { config, updateConfig } = await import('./config.js');
+      const original = config.sttProvider;
+      updateConfig('sttProvider', 'openai');
+      expect(config.sttProvider).toBe('openai');
+      // Restore
+      updateConfig('sttProvider', original);
+    });
+
+    it('updates sttProvider to local', async () => {
+      const { config, updateConfig } = await import('./config.js');
+      updateConfig('sttProvider', 'local');
+      expect(config.sttProvider).toBe('local');
+    });
+
+    it('rejects invalid sttProvider', async () => {
+      const { updateConfig } = await import('./config.js');
+      expect(() => updateConfig('sttProvider', 'whisper' as any)).toThrow(/Invalid sttProvider/);
+    });
+
+    it('updates language to a supported code', async () => {
+      const { config, updateConfig } = await import('./config.js');
+      const original = config.language;
+      updateConfig('language', 'en');
+      expect(config.language).toBe('en');
+      updateConfig('language', original);
+    });
+
+    it('rejects unsupported language code', async () => {
+      const { updateConfig } = await import('./config.js');
+      expect(() => updateConfig('language', 'zz')).toThrow(/Invalid language/);
+    });
+
+    it('rejects empty language', async () => {
+      const { updateConfig } = await import('./config.js');
+      expect(() => updateConfig('language', '')).toThrow(/Invalid language/);
+    });
+
+    it('updates edgeVoiceGender to male', async () => {
+      const { config, updateConfig } = await import('./config.js');
+      const original = config.edgeVoiceGender;
+      updateConfig('edgeVoiceGender', 'male');
+      expect(config.edgeVoiceGender).toBe('male');
+      updateConfig('edgeVoiceGender', original);
+    });
+
+    it('updates edgeVoiceGender to female', async () => {
+      const { config, updateConfig } = await import('./config.js');
+      updateConfig('edgeVoiceGender', 'female');
+      expect(config.edgeVoiceGender).toBe('female');
+    });
+
+    it('rejects invalid edgeVoiceGender', async () => {
+      const { updateConfig } = await import('./config.js');
+      expect(() => updateConfig('edgeVoiceGender', 'nonbinary' as any)).toThrow(/Invalid edgeVoiceGender/);
+    });
+
+    it('updates sessionSecret', async () => {
+      const { config, updateConfig } = await import('./config.js');
+      updateConfig('sessionSecret', 'test-secret-value-123');
+      expect(config.sessionSecret).toBe('test-secret-value-123');
+    });
+
+    it('rejects empty sessionSecret', async () => {
+      const { updateConfig } = await import('./config.js');
+      expect(() => updateConfig('sessionSecret', '')).toThrow(/sessionSecret must be a non-empty string/);
+    });
+
+    it('does not accept unknown keys at compile time', async () => {
+      const { updateConfig } = await import('./config.js');
+      // @ts-expect-error — 'port' is not a mutable key
+      expect(() => updateConfig('port', 9999)).toThrow();
+    });
+
+    it('config object retains as-const read types after mutation', async () => {
+      const { config, updateConfig } = await import('./config.js');
+      updateConfig('sttProvider', 'openai');
+      // TypeScript still sees config.sttProvider as 'local' | 'openai' (readonly),
+      // but the runtime value should be updated.
+      const provider: string = config.sttProvider;
+      expect(provider).toBe('openai');
+      updateConfig('sttProvider', 'local');
+    });
+  });
 });

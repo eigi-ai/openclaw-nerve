@@ -7,7 +7,7 @@
  */
 
 import { Hono } from 'hono';
-import { config } from '../lib/config.js';
+import { config, updateConfig } from '../lib/config.js';
 import { SUPPORTED_LANGUAGES } from '../lib/constants.js';
 import { writeEnvKey } from '../lib/env-file.js';
 import { isLanguageSupported } from '../lib/language.js';
@@ -115,7 +115,7 @@ app.put('/api/transcribe/config', async (c) => {
 
     // Switch provider
     if (body.provider === 'local' || body.provider === 'openai') {
-      (config as Record<string, unknown>).sttProvider = body.provider;
+      updateConfig('sttProvider', body.provider);
       messages.push(`Provider set to ${body.provider}`);
     }
 
@@ -132,7 +132,7 @@ app.put('/api/transcribe/config', async (c) => {
       if (!SUPPORTED_LANGUAGES.find((l) => l.code === lang)) {
         return c.text(`Unsupported language: ${lang}. Available: ${SUPPORTED_LANGUAGES.map((l) => l.code).join(', ')}`, 400);
       }
-      (config as Record<string, unknown>).language = lang;
+      updateConfig('language', lang);
       await writeEnvKey('NERVE_LANGUAGE', lang);
       messages.push(`Language set to ${lang}`);
     }
@@ -182,7 +182,7 @@ app.put('/api/language', rateLimitGeneral, async (c) => {
       if (!SUPPORTED_LANGUAGES.find((l) => l.code === lang)) {
         return c.text(`Unsupported language: ${lang}. Available: ${SUPPORTED_LANGUAGES.map((l) => l.code).join(', ')}`, 400);
       }
-      (config as Record<string, unknown>).language = lang;
+      updateConfig('language', lang);
       await writeEnvKey('NERVE_LANGUAGE', lang);
     }
 
@@ -191,7 +191,7 @@ app.put('/api/language', rateLimitGeneral, async (c) => {
       if (gender !== 'female' && gender !== 'male') {
         return c.text('edgeVoiceGender must be "female" or "male"', 400);
       }
-      (config as Record<string, unknown>).edgeVoiceGender = gender;
+      updateConfig('edgeVoiceGender', gender);
       await writeEnvKey('EDGE_VOICE_GENDER', gender);
     }
 
