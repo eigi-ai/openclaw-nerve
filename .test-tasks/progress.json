@@ -5,7 +5,7 @@
     "3-server-api": { "status": "done", "startedAt": "2026-02-26T11:45:00Z", "completedAt": "2026-02-26T11:57:00Z" },
     "4-client-components": { "status": "done", "startedAt": "2026-02-26T11:57:00Z", "completedAt": "2026-02-26T12:01:00Z" },
     "5-validation-1": { "status": "done", "startedAt": "2026-02-26T12:15:00Z", "completedAt": "2026-02-26T12:18:00Z" },
-    "6-validation-2": { "status": "pending", "startedAt": null, "completedAt": null },
+    "6-validation-2": { "status": "done", "startedAt": "2026-02-26T12:18:00Z", "completedAt": "2026-02-26T12:21:00Z" },
     "7-validation-3": { "status": "pending", "startedAt": null, "completedAt": null },
     "8-deslop": { "status": "pending", "startedAt": null, "completedAt": null }
   }
