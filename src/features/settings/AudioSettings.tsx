@@ -471,14 +471,24 @@ export function AudioSettings({
   const showEnglishOnlyWarning = isNonEnglishLocalStt && !isMultilingual;
   const showTinyAccuracyWarning = isNonEnglishLocalStt && isMultilingual && sttModel === 'tiny';
 
+  // All 13 OpenAI TTS voices. tts-1 and tts-1-hd only support a subset (no ballad, cedar, marin, verse).
+  const LEGACY_ONLY_VOICES = new Set(['ballad', 'cedar', 'marin', 'verse']);
+  const isLegacyModel = ttsModel === 'tts-1' || ttsModel === 'tts-1-hd';
   const OPENAI_VOICES = [
-    { value: 'alloy', label: 'Alloy' },
-    { value: 'echo', label: 'Echo' },
-    { value: 'fable', label: 'Fable' },
-    { value: 'onyx', label: 'Onyx' },
-    { value: 'nova', label: 'Nova' },
-    { value: 'shimmer', label: 'Shimmer' },
-  ];
+    { value: 'alloy', label: 'Alloy — Neutral, balanced' },
+    { value: 'ash', label: 'Ash — Warm, conversational' },
+    { value: 'ballad', label: 'Ballad — Expressive, storytelling' },
+    { value: 'cedar', label: 'Cedar — Calm, steady' },
+    { value: 'coral', label: 'Coral — Clear, friendly' },
+    { value: 'echo', label: 'Echo — Smooth, calm' },
+    { value: 'fable', label: 'Fable — British-accented, narrative' },
+    { value: 'marin', label: 'Marin — Warm, approachable' },
+    { value: 'nova', label: 'Nova — Energetic, young' },
+    { value: 'onyx', label: 'Onyx — Deep, authoritative' },
+    { value: 'sage', label: 'Sage — Wise, measured' },
+    { value: 'shimmer', label: 'Shimmer — Soft, gentle' },
+    { value: 'verse', label: 'Verse — Versatile, dynamic' },
+  ].filter(v => !isLegacyModel || !LEGACY_ONLY_VOICES.has(v.value));
 
   // Build Edge voice options from selected language.
   // English keeps the full legacy list; other languages use curated voice pairs.
@@ -713,7 +723,7 @@ export function AudioSettings({
                   onChange={(v) => updateField('openai', 'voice', v)}
                   options={OPENAI_VOICES}
                   ariaLabel="OpenAI Voice"
-                  menuClassName="min-w-[140px]"
+                  menuClassName="min-w-[260px]"
                 />
               </div>
               <ExpandableInput
