@@ -4,6 +4,20 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.4.7] — 2026-03-03
+
+### Changed
+- Added a **Live Transcription Preview** toggle in Audio settings so browser interim transcript rendering can be enabled/disabled per user (PR #78)
+- Fresh defaults for local Whisper STT now use multilingual `base` across installer, server fallback, and fresh UI state (PR #78)
+- Installer Whisper bootstrap now resolves and normalizes `WHISPER_MODEL` from `.env` (supports quotes/comments/aliases like `tiny`, `base`, `small` and `.en` variants) (PR #78)
+
+### Fixed
+- Edge TTS voice now auto-switches on language change and validates language-compatible voice overrides to prevent language/voice mismatch (PR #78)
+- English custom `en-*` Edge voice overrides are preserved during auto-reconcile; server-side English override detection is now gender-aware (PR #78)
+- Local Whisper model management now cancels stale model downloads and syncs active server model state on startup (PR #79)
+
+---
+
 ## [1.4.6] — 2026-03-03
 
 ### Added
