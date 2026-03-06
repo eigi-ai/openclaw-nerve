@@ -1,7 +1,12 @@
-import { useState, useEffect } from 'react';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
+import { useState, useEffect } from "react";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 
 interface ConnectDialogProps {
   open: boolean;
@@ -12,7 +17,13 @@ interface ConnectDialogProps {
 }
 
 /** Initial connection dialog for entering the gateway URL and token. */
-export function ConnectDialog({ open, onConnect, error, defaultUrl, defaultToken = '' }: ConnectDialogProps) {
+export function ConnectDialog({
+  open,
+  onConnect,
+  error,
+  defaultUrl,
+  defaultToken = "",
+}: ConnectDialogProps) {
   const [url, setUrl] = useState(defaultUrl);
   const [token, setToken] = useState(defaultToken);
   const [connecting, setConnecting] = useState(false);
@@ -21,7 +32,9 @@ export function ConnectDialog({ open, onConnect, error, defaultUrl, defaultToken
     if (open) {
       // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional reset when dialog opens
       setUrl(defaultUrl);
-      setToken(prev => prev || defaultToken);
+      // Always apply the latest defaultToken — URL param rotation must override
+      // any previously-cached value, not just fill an empty field.
+      setToken(defaultToken);
     }
   }, [defaultUrl, defaultToken, open]);
 
@@ -31,14 +44,17 @@ export function ConnectDialog({ open, onConnect, error, defaultUrl, defaultToken
     try {
       await onConnect(url.trim(), token.trim());
     } catch (err) {
-      console.debug('[ConnectDialog] Connection failed:', err);
+      console.debug("[ConnectDialog] Connection failed:", err);
     }
     setConnecting(false);
   };
 
   return (
     <Dialog open={open}>
-      <DialogContent className="bg-card border-border font-mono max-w-[380px] [&>button]:hidden" showCloseButton={false}>
+      <DialogContent
+        className="bg-card border-border font-mono max-w-[380px] [&>button]:hidden"
+        showCloseButton={false}
+      >
         <DialogHeader>
           <DialogTitle className="text-primary text-xs font-bold tracking-[2px] uppercase">
             // CONNECT TO GATEWAY
@@ -49,7 +65,7 @@ export function ConnectDialog({ open, onConnect, error, defaultUrl, defaultToken
             WebSocket URL
             <Input
               value={url}
-              onChange={e => setUrl(e.target.value)}
+              onChange={(e) => setUrl(e.target.value)}
               spellCheck={false}
               className="bg-background border-border text-foreground font-mono text-[13px]"
             />
@@ -59,8 +75,8 @@ export function ConnectDialog({ open, onConnect, error, defaultUrl, defaultToken
             <Input
               type="password"
               value={token}
-              onChange={e => setToken(e.target.value)}
-              onKeyDown={e => e.key === 'Enter' && handleConnect()}
+              onChange={(e) => setToken(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && handleConnect()}
               spellCheck={false}
               className="bg-background border-border text-foreground font-mono text-[13px]"
             />
@@ -70,7 +86,7 @@ export function ConnectDialog({ open, onConnect, error, defaultUrl, defaultToken
             disabled={connecting}
             className="bg-primary text-primary-foreground font-mono text-xs font-bold tracking-[1px] uppercase"
           >
-            {connecting ? 'CONNECTING…' : 'CONNECT'}
+            {connecting ? "CONNECTING…" : "CONNECT"}
           </Button>
           {error && <div className="text-destructive text-[11px]">{error}</div>}
         </div>

@@ -4,9 +4,13 @@
  * Extracted from App.tsx to separate connection concerns from layout.
  * Manages auto-connect on mount and reconnect logic.
  *
- * On first load, if no session config exists, fetches /api/connect-defaults
- * from the server to pre-fill (and auto-connect with) the configured gateway
- * URL and token. This bridges the server-side .env config to the browser.
+ * Priority order for gateway credentials (highest wins):
+ *   1. URL query params (`?gateway=…&token=…`) — used by "Open Cockpit" deep links
+ *   2. localStorage (`oc-config`) — persisted from previous session
+ *   3. /api/connect-defaults — server-side .env fallback (loopback only)
+ *
+ * When URL params are present the token is saved to localStorage and the
+ * sensitive params are stripped from the address bar via replaceState.
  */
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { useGateway, loadConfig, saveConfig } from '@/contexts/GatewayContext';
@@ -43,6 +47,29 @@ async function fetchConnectDefaults(): Promise<{ wsUrl: string; token: string | 
   }
 }
 
+/**
+ * Read `gateway` and `token` from URL query params, then strip them
+ * from the address bar so the token isn't visible in history / bookmarks.
+ *
+ * Returns `{ url, token }` if both params are present, otherwise `null`.
+ */
+function consumeUrlParams(): { url: string; token: string } | null {
+  const params = new URLSearchParams(window.location.search);
+  const gateway = params.get('gateway');
+  const token = params.get('token');
+
+  if (!gateway || !token) return null;
+
+  // Strip sensitive params from the browser address bar
+  params.delete('gateway');
+  params.delete('token');
+  const remaining = params.toString();
+  const cleanUrl = window.location.pathname + (remaining ? `?${remaining}` : '') + window.location.hash;
+  window.history.replaceState({}, '', cleanUrl);
+
+  return { url: gateway, token };
+}
+
 export function useConnectionManager(): ConnectionManagerState {
   const { connectionState, connect, disconnect } = useGateway();
   
@@ -56,19 +83,47 @@ export function useConnectionManager(): ConnectionManagerState {
   // Track if we've attempted auto-connect to avoid re-running
   const autoConnectAttempted = useRef(false);
 
-  // Fetch server defaults when no saved config exists (async, can't run in initializer)
+  // Resolve credentials: URL params > localStorage > server defaults
   useEffect(() => {
     if (autoConnectAttempted.current) return;
     autoConnectAttempted.current = true;
 
-    const saved = loadConfig();
-    if (saved.url && saved.token) return; // Already pre-filled by useState initializers
+    // 1. URL params take highest priority (deep link from "Open Cockpit").
+    //    Always consumed — even if localStorage already has a saved config,
+    //    the URL params carry the CURRENT token which may have rotated.
+    const urlCreds = consumeUrlParams();
+    if (urlCreds) {
+      setEditableUrl(urlCreds.url);
+      setEditableToken(urlCreds.token);
+      saveConfig(urlCreds.url, urlCreds.token);
+      // Auto-connect immediately — skip the dialog
+      connect(urlCreds.url, urlCreds.token)
+        .then(() => setDialogOpen(false))
+        .catch(() => { /* dialog will show on failure */ });
+      return;
+    }
 
-    // No saved config — try to get defaults from the server to pre-fill
+    // 2. localStorage (previous session) — auto-connect with saved creds
+    const saved = loadConfig();
+    if (saved.url && saved.token) {
+      connect(saved.url, saved.token)
+        .then(() => setDialogOpen(false))
+        .catch(() => { /* dialog will show on failure */ });
+      return;
+    }
+
+    // 3. Server-side defaults (/api/connect-defaults)
     fetchConnectDefaults().then((defaults) => {
       if (defaults?.wsUrl) setEditableUrl(defaults.wsUrl);
       if (defaults?.token) setEditableToken(defaults.token);
+      // Auto-connect if both URL and token are available
+      if (defaults?.wsUrl && defaults?.token) {
+        connect(defaults.wsUrl, defaults.token)
+          .then(() => setDialogOpen(false))
+          .catch(() => { /* dialog will show on failure */ });
+      }
     });
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- one-time mount effect
   }, []);
 
   const handleConnect = useCallback(async (url: string, token: string) => {

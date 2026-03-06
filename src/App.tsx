@@ -1,44 +1,76 @@
 /**
  * App.tsx - Main application layout component
- * 
+ *
  * This component focuses on layout and composition.
  * Connection management is handled by useConnectionManager.
  * Dashboard data fetching is handled by useDashboardData.
  */
-import { useState, useEffect, useRef, useCallback, useMemo, lazy, Suspense } from 'react';
-import { useGateway, loadConfig } from '@/contexts/GatewayContext';
-import { useSessionContext } from '@/contexts/SessionContext';
-import { useChat } from '@/contexts/ChatContext';
-import { useSettings, type STTInputMode } from '@/contexts/SettingsContext';
-import { getSessionKey } from '@/types';
-import { useConnectionManager } from '@/hooks/useConnectionManager';
-import { useDashboardData } from '@/hooks/useDashboardData';
-import { useGatewayRestart } from '@/hooks/useGatewayRestart';
-import { ConnectDialog } from '@/features/connect/ConnectDialog';
-import { TopBar } from '@/components/TopBar';
-import { StatusBar } from '@/components/StatusBar';
-import { ConfirmDialog } from '@/components/ConfirmDialog';
-import { ChatPanel, type ChatPanelHandle } from '@/features/chat/ChatPanel';
-import type { TTSProvider } from '@/features/tts/useTTS';
-import type { ViewMode } from '@/features/command-palette/commands';
-import { ResizablePanels } from '@/components/ResizablePanels';
-import { getContextLimit, DEFAULT_GATEWAY_WS } from '@/lib/constants';
-import { useKeyboardShortcuts } from '@/hooks/useKeyboardShortcuts';
-import { createCommands } from '@/features/command-palette/commands';
-import { PanelErrorBoundary } from '@/components/PanelErrorBoundary';
-import { SpawnAgentDialog } from '@/features/sessions/SpawnAgentDialog';
-import { FileTreePanel, TabbedContentArea, useOpenFiles } from '@/features/file-browser';
+import {
+  useState,
+  useEffect,
+  useRef,
+  useCallback,
+  useMemo,
+  lazy,
+  Suspense,
+} from "react";
+import { useGateway } from "@/contexts/GatewayContext";
+import { useSessionContext } from "@/contexts/SessionContext";
+import { useChat } from "@/contexts/ChatContext";
+import { useSettings, type STTInputMode } from "@/contexts/SettingsContext";
+import { getSessionKey } from "@/types";
+import { useConnectionManager } from "@/hooks/useConnectionManager";
+import { useDashboardData } from "@/hooks/useDashboardData";
+import { useGatewayRestart } from "@/hooks/useGatewayRestart";
+import { ConnectDialog } from "@/features/connect/ConnectDialog";
+import { TopBar } from "@/components/TopBar";
+import { StatusBar } from "@/components/StatusBar";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
+import { ChatPanel, type ChatPanelHandle } from "@/features/chat/ChatPanel";
+import type { TTSProvider } from "@/features/tts/useTTS";
+import type { ViewMode } from "@/features/command-palette/commands";
+import { ResizablePanels } from "@/components/ResizablePanels";
+import { getContextLimit } from "@/lib/constants";
+import { useKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
+import { createCommands } from "@/features/command-palette/commands";
+import { PanelErrorBoundary } from "@/components/PanelErrorBoundary";
+import { SpawnAgentDialog } from "@/features/sessions/SpawnAgentDialog";
+import {
+  FileTreePanel,
+  TabbedContentArea,
+  useOpenFiles,
+} from "@/features/file-browser";
 
 // Lazy-loaded features (not needed in initial bundle)
-const SettingsDrawer = lazy(() => import('@/features/settings/SettingsDrawer').then(m => ({ default: m.SettingsDrawer })));
-const CommandPalette = lazy(() => import('@/features/command-palette/CommandPalette').then(m => ({ default: m.CommandPalette })));
+const SettingsDrawer = lazy(() =>
+  import("@/features/settings/SettingsDrawer").then((m) => ({
+    default: m.SettingsDrawer,
+  })),
+);
+const CommandPalette = lazy(() =>
+  import("@/features/command-palette/CommandPalette").then((m) => ({
+    default: m.CommandPalette,
+  })),
+);
 
 // Lazy-loaded side panels
-const SessionList = lazy(() => import('@/features/sessions/SessionList').then(m => ({ default: m.SessionList })));
-const WorkspacePanel = lazy(() => import('@/features/workspace/WorkspacePanel').then(m => ({ default: m.WorkspacePanel })));
+const SessionList = lazy(() =>
+  import("@/features/sessions/SessionList").then((m) => ({
+    default: m.SessionList,
+  })),
+);
+const WorkspacePanel = lazy(() =>
+  import("@/features/workspace/WorkspacePanel").then((m) => ({
+    default: m.WorkspacePanel,
+  })),
+);
 
 // Lazy-loaded view modes
-const KanbanPanel = lazy(() => import('@/features/kanban/KanbanPanel').then(m => ({ default: m.KanbanPanel })));
+const KanbanPanel = lazy(() =>
+  import("@/features/kanban/KanbanPanel").then((m) => ({
+    default: m.KanbanPanel,
+  })),
+);
 
 interface AppProps {
   onLogout?: () => void;
@@ -46,46 +78,87 @@ interface AppProps {
 
 export default function App({ onLogout }: AppProps) {
   // Gateway state
-  const {
-    connectionState, connectError, reconnectAttempt, model, sparkline,
-  } = useGateway();
+  const { connectionState, connectError, reconnectAttempt, model, sparkline } =
+    useGateway();
 
   // Session state
   const {
-    sessions, sessionsLoading, currentSession, setCurrentSession,
-    busyState, agentStatus, unreadSessions, refreshSessions, deleteSession, abortSession, spawnAgent, renameSession,
-    agentLogEntries, eventEntries,
+    sessions,
+    sessionsLoading,
+    currentSession,
+    setCurrentSession,
+    busyState,
+    agentStatus,
+    unreadSessions,
+    refreshSessions,
+    deleteSession,
+    abortSession,
+    spawnAgent,
+    renameSession,
+    agentLogEntries,
+    eventEntries,
     agentName,
   } = useSessionContext();
 
   // Chat state
   const {
-    messages, isGenerating, stream, processingStage,
-    lastEventTimestamp, activityLog, currentToolDescription,
-    handleSend, handleAbort, handleReset, loadHistory,
-    loadMore, hasMore,
-    showResetConfirm, confirmReset, cancelReset,
+    messages,
+    isGenerating,
+    stream,
+    processingStage,
+    lastEventTimestamp,
+    activityLog,
+    currentToolDescription,
+    handleSend,
+    handleAbort,
+    handleReset,
+    loadHistory,
+    loadMore,
+    hasMore,
+    showResetConfirm,
+    confirmReset,
+    cancelReset,
   } = useChat();
 
   // Settings state
   const {
-    soundEnabled, toggleSound,
-    ttsProvider, ttsModel, setTtsProvider, setTtsModel,
-    sttProvider, setSttProvider, sttInputMode, setSttInputMode, sttModel, setSttModel,
-    wakeWordEnabled, handleToggleWakeWord, handleWakeWordState,
-    liveTranscriptionPreview, toggleLiveTranscriptionPreview,
-    panelRatio, setPanelRatio,
-    eventsVisible, logVisible,
-    toggleEvents, toggleLog, toggleTelemetry,
-    setTheme, setFont,
+    soundEnabled,
+    toggleSound,
+    ttsProvider,
+    ttsModel,
+    setTtsProvider,
+    setTtsModel,
+    sttProvider,
+    setSttProvider,
+    sttInputMode,
+    setSttInputMode,
+    sttModel,
+    setSttModel,
+    wakeWordEnabled,
+    handleToggleWakeWord,
+    handleWakeWordState,
+    liveTranscriptionPreview,
+    toggleLiveTranscriptionPreview,
+    panelRatio,
+    setPanelRatio,
+    eventsVisible,
+    logVisible,
+    toggleEvents,
+    toggleLog,
+    toggleTelemetry,
+    setTheme,
+    setFont,
   } = useSettings();
 
   // Connection management (extracted hook)
   const {
     dialogOpen,
-    editableUrl, setEditableUrl,
-    editableToken, setEditableToken,
-    handleConnect, handleReconnect,
+    editableUrl,
+    setEditableUrl,
+    editableToken,
+    setEditableToken,
+    handleConnect,
+    handleReconnect,
   } = useConnectionManager();
 
   // Track last changed file path for tree refresh
@@ -93,34 +166,53 @@ export default function App({ onLogout }: AppProps) {
 
   // File browser state
   const {
-    openFiles, activeTab, setActiveTab,
-    openFile, closeFile, updateContent, saveFile, reloadFile, initializeFiles,
-    handleFileChanged, remapOpenPaths, closeOpenPathsByPrefix,
+    openFiles,
+    activeTab,
+    setActiveTab,
+    openFile,
+    closeFile,
+    updateContent,
+    saveFile,
+    reloadFile,
+    initializeFiles,
+    handleFileChanged,
+    remapOpenPaths,
+    closeOpenPathsByPrefix,
   } = useOpenFiles();
 
   // Save with conflict toast
-  const [saveToast, setSaveToast] = useState<{ path: string; type: 'conflict' | 'error' } | null>(null);
-  const handleSaveFile = useCallback(async (filePath: string) => {
-    const result = await saveFile(filePath);
-    if (!result.ok) {
-      if (result.conflict) {
-        setSaveToast({ path: filePath, type: 'conflict' });
-        // Auto-dismiss after 5s
-        setTimeout(() => setSaveToast(null), 5000);
+  const [saveToast, setSaveToast] = useState<{
+    path: string;
+    type: "conflict" | "error";
+  } | null>(null);
+  const handleSaveFile = useCallback(
+    async (filePath: string) => {
+      const result = await saveFile(filePath);
+      if (!result.ok) {
+        if (result.conflict) {
+          setSaveToast({ path: filePath, type: "conflict" });
+          // Auto-dismiss after 5s
+          setTimeout(() => setSaveToast(null), 5000);
+        }
+      } else {
+        setSaveToast(null);
       }
-    } else {
-      setSaveToast(null);
-    }
-  }, [saveFile]);
+    },
+    [saveFile],
+  );
 
   // Single file.changed handler — feeds both open files and tree refresh
-  const onFileChanged = useCallback((path: string) => {
-    handleFileChanged(path);
-    setLastChangedPath(path);
-  }, [handleFileChanged]);
+  const onFileChanged = useCallback(
+    (path: string) => {
+      handleFileChanged(path);
+      setLastChangedPath(path);
+    },
+    [handleFileChanged],
+  );
 
   // Dashboard data (extracted hook) — single SSE connection handles all events
-  const { memories, memoriesLoading, tokenData, refreshMemories } = useDashboardData({ onFileChanged });
+  const { memories, memoriesLoading, tokenData, refreshMemories } =
+    useDashboardData({ onFileChanged });
 
   // UI state
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -142,8 +234,8 @@ export default function App({ onLogout }: AppProps) {
 
   // Responsive layout state (chat-first on smaller viewports)
   const [isCompactLayout, setIsCompactLayout] = useState(() => {
-    if (typeof window === 'undefined') return false;
-    return window.matchMedia('(max-width: 900px)').matches;
+    if (typeof window === "undefined") return false;
+    return window.matchMedia("(max-width: 900px)").matches;
   });
 
   // Command palette state
@@ -154,20 +246,29 @@ export default function App({ onLogout }: AppProps) {
   // View mode state (chat | kanban), persisted to localStorage
   const [viewMode, setViewModeRaw] = useState<ViewMode>(() => {
     try {
-      const saved = localStorage.getItem('nerve:viewMode');
-      if (saved === 'kanban') return 'kanban';
-    } catch { /* ignore */ }
-    return 'chat';
+      const saved = localStorage.getItem("nerve:viewMode");
+      if (saved === "kanban") return "kanban";
+    } catch {
+      /* ignore */
+    }
+    return "chat";
   });
   const [pendingTaskId, setPendingTaskId] = useState<string | null>(null);
   const setViewMode = useCallback((mode: ViewMode) => {
     setViewModeRaw(mode);
-    try { localStorage.setItem('nerve:viewMode', mode); } catch { /* ignore */ }
+    try {
+      localStorage.setItem("nerve:viewMode", mode);
+    } catch {
+      /* ignore */
+    }
   }, []);
-  const openTaskInBoard = useCallback((taskId: string) => {
-    setPendingTaskId(taskId);
-    setViewMode('kanban');
-  }, [setViewMode]);
+  const openTaskInBoard = useCallback(
+    (taskId: string) => {
+      setPendingTaskId(taskId);
+      setViewMode("kanban");
+    },
+    [setViewMode],
+  );
 
   // Build command list with stable references
   const openSettings = useCallback(() => setSettingsOpen(true), []);
@@ -178,27 +279,46 @@ export default function App({ onLogout }: AppProps) {
 
   const openSpawnDialog = useCallback(() => setSpawnDialogOpen(true), []);
 
-  const commands = useMemo(() => createCommands({
-    onNewSession: openSpawnDialog,
-    onResetSession: handleReset,
-    onToggleSound: toggleSound,
-    onSettings: openSettings,
-    onSearch: openSearch,
-    onAbort: handleAbort,
-    onSetTheme: setTheme,
-    onSetFont: setFont,
-    onTtsProviderChange: setTtsProvider,
-    onToggleWakeWord: handleToggleWakeWord,
-    onToggleEvents: toggleEvents,
-    onToggleLog: toggleLog,
-    onToggleTelemetry: toggleTelemetry,
-    onOpenSettings: openSettings,
-    onRefreshSessions: refreshSessions,
-    onRefreshMemory: refreshMemories,
-    onSetViewMode: setViewMode,
-  }), [openSpawnDialog, handleReset, toggleSound, handleAbort, openSettings, openSearch,
-    setTheme, setFont, setTtsProvider, handleToggleWakeWord, toggleEvents, toggleLog, toggleTelemetry,
-    refreshSessions, refreshMemories, setViewMode]);
+  const commands = useMemo(
+    () =>
+      createCommands({
+        onNewSession: openSpawnDialog,
+        onResetSession: handleReset,
+        onToggleSound: toggleSound,
+        onSettings: openSettings,
+        onSearch: openSearch,
+        onAbort: handleAbort,
+        onSetTheme: setTheme,
+        onSetFont: setFont,
+        onTtsProviderChange: setTtsProvider,
+        onToggleWakeWord: handleToggleWakeWord,
+        onToggleEvents: toggleEvents,
+        onToggleLog: toggleLog,
+        onToggleTelemetry: toggleTelemetry,
+        onOpenSettings: openSettings,
+        onRefreshSessions: refreshSessions,
+        onRefreshMemory: refreshMemories,
+        onSetViewMode: setViewMode,
+      }),
+    [
+      openSpawnDialog,
+      handleReset,
+      toggleSound,
+      handleAbort,
+      openSettings,
+      openSearch,
+      setTheme,
+      setFont,
+      setTtsProvider,
+      handleToggleWakeWord,
+      toggleEvents,
+      toggleLog,
+      toggleTelemetry,
+      refreshSessions,
+      refreshMemories,
+      setViewMode,
+    ],
+  );
 
   // Keyboard shortcut handlers with useCallback
   const handleOpenPalette = useCallback(() => setPaletteOpen(true), []);
@@ -207,7 +327,7 @@ export default function App({ onLogout }: AppProps) {
       handleAbort();
     }
   }, [isGenerating, handleAbort]);
-  const toggleSearch = useCallback(() => setSearchOpen(prev => !prev), []);
+  const toggleSearch = useCallback(() => setSearchOpen((prev) => !prev), []);
   const handleEscape = useCallback(() => {
     if (paletteOpen) {
       setPaletteOpen(false);
@@ -220,36 +340,37 @@ export default function App({ onLogout }: AppProps) {
 
   // Global keyboard shortcuts
   useKeyboardShortcuts([
-    { key: 'k', meta: true, handler: handleOpenPalette },
-    { key: 'f', meta: true, handler: toggleSearch, skipInEditor: true },  // Cmd+F → chat search (yields to CodeMirror search in editor)
-    { key: 'c', ctrl: true, handler: handleCtrlC, preventDefault: false },  // Ctrl+C → abort (when generating), allow copy to still work
-    { key: 'Escape', handler: handleEscape, skipInEditor: true },
+    { key: "k", meta: true, handler: handleOpenPalette },
+    { key: "f", meta: true, handler: toggleSearch, skipInEditor: true }, // Cmd+F → chat search (yields to CodeMirror search in editor)
+    { key: "c", ctrl: true, handler: handleCtrlC, preventDefault: false }, // Ctrl+C → abort (when generating), allow copy to still work
+    { key: "Escape", handler: handleEscape, skipInEditor: true },
   ]);
 
   // Get current session's context usage for StatusBar
   const currentSessionData = useMemo(() => {
-    return sessions.find(s => getSessionKey(s) === currentSession);
+    return sessions.find((s) => getSessionKey(s) === currentSession);
   }, [sessions, currentSession]);
 
   // Get display name for current session (agent name for main, label for subagents)
   const currentSessionDisplayName = useMemo(() => {
-    if (currentSession === 'agent:main:main') return agentName;
+    if (currentSession === "agent:main:main") return agentName;
     return currentSessionData?.label || agentName;
   }, [currentSession, currentSessionData, agentName]);
 
   const contextTokens = currentSessionData?.totalTokens ?? 0;
-  const contextLimit = currentSessionData?.contextTokens || getContextLimit(model);
+  const contextLimit =
+    currentSessionData?.contextTokens || getContextLimit(model);
 
   // Restore previously open file tabs
   useEffect(() => {
-    if (connectionState === 'connected') {
+    if (connectionState === "connected") {
       initializeFiles();
     }
   }, [connectionState, initializeFiles]);
 
   // Boot sequence: fade in panels when connected
   useEffect(() => {
-    if (connectionState === 'connected' && !booted) {
+    if (connectionState === "connected" && !booted) {
       const timer = setTimeout(() => setBooted(true), 50);
       return () => clearTimeout(timer);
     }
@@ -272,16 +393,16 @@ export default function App({ onLogout }: AppProps) {
 
   // Responsive mode: switch to chat-first layout on smaller screens
   useEffect(() => {
-    if (typeof window === 'undefined') return;
+    if (typeof window === "undefined") return;
 
-    const mq = window.matchMedia('(max-width: 900px)');
+    const mq = window.matchMedia("(max-width: 900px)");
     const onChange = (event: MediaQueryListEvent) => {
       setIsCompactLayout(event.matches);
     };
 
     if (mq.addEventListener) {
-      mq.addEventListener('change', onChange);
-      return () => mq.removeEventListener('change', onChange);
+      mq.addEventListener("change", onChange);
+      return () => mq.removeEventListener("change", onChange);
     }
 
     // Safari fallback
@@ -290,34 +411,49 @@ export default function App({ onLogout }: AppProps) {
   }, []);
 
   // Handler for session changes
-  const handleSessionChange = useCallback(async (key: string) => {
-    setCurrentSession(key);
-    await loadHistory(key);
-  }, [setCurrentSession, loadHistory]);
+  const handleSessionChange = useCallback(
+    async (key: string) => {
+      setCurrentSession(key);
+      await loadHistory(key);
+    },
+    [setCurrentSession, loadHistory],
+  );
 
   // Handlers for TTS provider/model changes
-  const handleTtsProviderChange = useCallback((provider: TTSProvider) => {
-    setTtsProvider(provider);
-  }, [setTtsProvider]);
+  const handleTtsProviderChange = useCallback(
+    (provider: TTSProvider) => {
+      setTtsProvider(provider);
+    },
+    [setTtsProvider],
+  );
 
-  const handleTtsModelChange = useCallback((model: string) => {
-    setTtsModel(model);
-  }, [setTtsModel]);
+  const handleTtsModelChange = useCallback(
+    (model: string) => {
+      setTtsModel(model);
+    },
+    [setTtsModel],
+  );
 
-  const handleSttProviderChange = useCallback((provider: 'local' | 'openai') => {
-    setSttProvider(provider);
-  }, [setSttProvider]);
+  const handleSttProviderChange = useCallback(
+    (provider: "local" | "openai") => {
+      setSttProvider(provider);
+    },
+    [setSttProvider],
+  );
 
-  const handleSttInputModeChange = useCallback((mode: STTInputMode) => {
-    setSttInputMode(mode);
-  }, [setSttInputMode]);
+  const handleSttInputModeChange = useCallback(
+    (mode: STTInputMode) => {
+      setSttInputMode(mode);
+    },
+    [setSttInputMode],
+  );
 
-  const handleSttModelChange = useCallback((model: string) => {
-    setSttModel(model);
-  }, [setSttModel]);
-
-  const savedConfig = useMemo(() => loadConfig(), []);
-  const defaultUrl = savedConfig.url || DEFAULT_GATEWAY_WS;
+  const handleSttModelChange = useCallback(
+    (model: string) => {
+      setSttModel(model);
+    },
+    [setSttModel],
+  );
 
   const chatContent = (
     <TabbedContentArea
@@ -358,8 +494,16 @@ export default function App({ onLogout }: AppProps) {
     />
   );
 
-  const renderRightPanels = (onSelect: (key: string) => Promise<void> | void) => (
-    <Suspense fallback={<div className="flex-1 flex items-center justify-center text-muted-foreground text-xs bg-background">Loading…</div>}>
+  const renderRightPanels = (
+    onSelect: (key: string) => Promise<void> | void,
+  ) => (
+    <Suspense
+      fallback={
+        <div className="flex-1 flex items-center justify-center text-muted-foreground text-xs bg-background">
+          Loading…
+        </div>
+      }
+    >
       {/* Sessions + Memory stacked vertically */}
       <div className="flex-1 flex flex-col gap-px min-h-0">
         <div className="flex-1 flex flex-col min-h-0 overflow-hidden bg-background">
@@ -383,7 +527,13 @@ export default function App({ onLogout }: AppProps) {
         </div>
         <div className="flex-1 flex flex-col min-h-0 overflow-hidden bg-background">
           <PanelErrorBoundary name="Workspace">
-            <WorkspacePanel memories={memories} onRefreshMemories={refreshMemories} memoriesLoading={memoriesLoading} onOpenBoard={() => setViewMode('kanban')} onOpenTask={openTaskInBoard} />
+            <WorkspacePanel
+              memories={memories}
+              onRefreshMemories={refreshMemories}
+              memoriesLoading={memoriesLoading}
+              onOpenBoard={() => setViewMode("kanban")}
+              onOpenTask={openTaskInBoard}
+            />
           </PanelErrorBoundary>
         </div>
       </div>
@@ -391,7 +541,13 @@ export default function App({ onLogout }: AppProps) {
   );
 
   const compactSessionsPanel = (
-    <Suspense fallback={<div className="p-4 text-muted-foreground text-xs">Loading sessions…</div>}>
+    <Suspense
+      fallback={
+        <div className="p-4 text-muted-foreground text-xs">
+          Loading sessions…
+        </div>
+      }
+    >
       <PanelErrorBoundary name="Sessions">
         <SessionList
           sessions={sessions}
@@ -414,37 +570,60 @@ export default function App({ onLogout }: AppProps) {
   );
 
   const compactWorkspacePanel = (
-    <Suspense fallback={<div className="p-4 text-muted-foreground text-xs">Loading workspace…</div>}>
+    <Suspense
+      fallback={
+        <div className="p-4 text-muted-foreground text-xs">
+          Loading workspace…
+        </div>
+      }
+    >
       <PanelErrorBoundary name="Workspace">
-        <WorkspacePanel memories={memories} onRefreshMemories={refreshMemories} memoriesLoading={memoriesLoading} compact onOpenBoard={() => setViewMode('kanban')} onOpenTask={openTaskInBoard} />
+        <WorkspacePanel
+          memories={memories}
+          onRefreshMemories={refreshMemories}
+          memoriesLoading={memoriesLoading}
+          compact
+          onOpenBoard={() => setViewMode("kanban")}
+          onOpenTask={openTaskInBoard}
+        />
       </PanelErrorBoundary>
     </Suspense>
   );
 
   return (
-    <div className="h-screen flex flex-col overflow-hidden scan-lines" data-booted={booted}>
+    <div
+      className="h-screen flex flex-col overflow-hidden scan-lines"
+      data-booted={booted}
+    >
       {/* Skip to main content link for keyboard navigation */}
-      <a 
-        href="#main-chat" 
+      <a
+        href="#main-chat"
         className="sr-only focus:not-sr-only focus:absolute focus:top-2 focus:left-2 focus:z-[100] focus:px-4 focus:py-2 focus:bg-primary focus:text-primary-foreground focus:font-bold focus:text-sm"
       >
         Skip to chat
       </a>
       <ConnectDialog
-        open={dialogOpen && connectionState !== 'connected' && connectionState !== 'reconnecting'}
+        open={
+          dialogOpen &&
+          connectionState !== "connected" &&
+          connectionState !== "reconnecting"
+        }
         onConnect={handleConnect}
         error={connectError}
-        defaultUrl={defaultUrl}
+        defaultUrl={editableUrl}
         defaultToken={editableToken}
       />
-      
+
       {/* Reconnecting banner — mission control style */}
-      {connectionState === 'reconnecting' && !gatewayRestarting && (
+      {connectionState === "reconnecting" && !gatewayRestarting && (
         <div className="fixed top-12 left-1/2 -translate-x-1/2 z-50 bg-gradient-to-r from-red-900/90 to-orange-900/90 text-red-200 px-5 py-2 rounded-sm text-[11px] font-mono flex items-center gap-2 shadow-lg border border-red-700/60 uppercase tracking-wider">
           <span className="text-red-400">⚠</span>
           <span>SIGNAL LOST</span>
           <span className="text-red-600">·</span>
-          <span>RECONNECTING{reconnectAttempt > 1 ? ` (ATTEMPT ${reconnectAttempt})` : ''}</span>
+          <span>
+            RECONNECTING
+            {reconnectAttempt > 1 ? ` (ATTEMPT ${reconnectAttempt})` : ""}
+          </span>
           <span className="w-2 h-2 bg-red-400 rounded-full animate-pulse" />
         </div>
       )}
@@ -465,15 +644,15 @@ export default function App({ onLogout }: AppProps) {
           onClick={dismissNotice}
           className={`fixed top-12 left-1/2 -translate-x-1/2 z-50 px-5 py-2 rounded-sm text-[11px] font-mono flex items-center gap-2 shadow-lg uppercase tracking-wider cursor-pointer hover:opacity-90 transition-opacity ${
             gatewayRestartNotice.ok
-              ? 'bg-gradient-to-r from-green-900/90 to-emerald-900/90 text-green-200 border border-green-700/60'
-              : 'bg-gradient-to-r from-red-900/90 to-orange-900/90 text-red-200 border border-red-700/60'
+              ? "bg-gradient-to-r from-green-900/90 to-emerald-900/90 text-green-200 border border-green-700/60"
+              : "bg-gradient-to-r from-red-900/90 to-orange-900/90 text-red-200 border border-red-700/60"
           }`}
         >
-          <span>{gatewayRestartNotice.ok ? '✓' : '⚠'}</span>
+          <span>{gatewayRestartNotice.ok ? "✓" : "⚠"}</span>
           <span>{gatewayRestartNotice.message}</span>
         </button>
       )}
-      
+
       <TopBar
         onSettings={openSettings}
         agentLogEntries={agentLogEntries}
@@ -488,7 +667,7 @@ export default function App({ onLogout }: AppProps) {
         viewMode={viewMode}
         onViewModeChange={setViewMode}
       />
-      
+
       <PanelErrorBoundary name="Settings">
         <Suspense fallback={null}>
           <SettingsDrawer
@@ -523,10 +702,10 @@ export default function App({ onLogout }: AppProps) {
           />
         </Suspense>
       </PanelErrorBoundary>
-      
+
       <div className="flex-1 flex overflow-hidden min-h-0">
         {/* File tree — far left, collapsible; hidden (not unmounted) in kanban to preserve state */}
-        <div className={viewMode === 'kanban' ? 'hidden' : 'h-full min-h-0'}>
+        <div className={viewMode === "kanban" ? "hidden" : "h-full min-h-0"}>
           <PanelErrorBoundary name="File Explorer">
             <FileTreePanel
               onOpenFile={openFile}
@@ -543,19 +722,30 @@ export default function App({ onLogout }: AppProps) {
          * in-progress voice recording / STT transcription survives tab switches.
          * See: https://github.com/.../issues/64
          */}
-        {viewMode === 'kanban' && (
+        {viewMode === "kanban" && (
           <div className="flex-1 flex flex-col min-w-0 min-h-0 boot-panel">
-            <Suspense fallback={<div className="flex-1 flex items-center justify-center text-muted-foreground text-xs bg-background">Loading…</div>}>
-              <KanbanPanel initialTaskId={pendingTaskId} onInitialTaskConsumed={() => setPendingTaskId(null)} />
+            <Suspense
+              fallback={
+                <div className="flex-1 flex items-center justify-center text-muted-foreground text-xs bg-background">
+                  Loading…
+                </div>
+              }
+            >
+              <KanbanPanel
+                initialTaskId={pendingTaskId}
+                onInitialTaskConsumed={() => setPendingTaskId(null)}
+              />
             </Suspense>
           </div>
         )}
         {isCompactLayout ? (
-          <div className={`flex-1 min-w-0 min-h-0 boot-panel${viewMode === 'kanban' ? ' hidden' : ''}`}>
+          <div
+            className={`flex-1 min-w-0 min-h-0 boot-panel${viewMode === "kanban" ? " hidden" : ""}`}
+          >
             {chatContent}
           </div>
         ) : (
-          <div style={{ display: viewMode === 'kanban' ? 'none' : 'contents' }}>
+          <div style={{ display: viewMode === "kanban" ? "none" : "contents" }}>
             <ResizablePanels
               leftPercent={panelRatio}
               onResize={setPanelRatio}
@@ -571,7 +761,7 @@ export default function App({ onLogout }: AppProps) {
       </div>
 
       {/* Status Bar */}
-      <div className="boot-panel" style={{ transitionDelay: '200ms' }}>
+      <div className="boot-panel" style={{ transitionDelay: "200ms" }}>
         <StatusBar
           connectionState={connectionState}
           sessionCount={sessions.length}
