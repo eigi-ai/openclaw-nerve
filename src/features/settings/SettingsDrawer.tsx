@@ -1,10 +1,10 @@
-import { useEffect, useCallback, useRef, useState } from 'react';
-import { X, Settings, LogOut, Mic, Monitor, Shield } from 'lucide-react';
-import { ConnectionSettings } from './ConnectionSettings';
-import { AudioSettings } from './AudioSettings';
-import { AppearanceSettings } from './AppearanceSettings';
-import type { TTSProvider } from '@/features/tts/useTTS';
-import type { STTInputMode, STTProvider } from '@/contexts/SettingsContext';
+import { useEffect, useCallback, useRef, useState } from "react";
+import { X, Settings, LogOut, Mic, Monitor, Shield } from "lucide-react";
+import { ConnectionSettings } from "./ConnectionSettings";
+import { AudioSettings } from "./AudioSettings";
+import { AppearanceSettings } from "./AppearanceSettings";
+import type { TTSProvider } from "@/features/tts/useTTS";
+import type { STTInputMode, STTProvider } from "@/contexts/SettingsContext";
 
 interface SettingsDrawerProps {
   open: boolean;
@@ -14,8 +14,13 @@ interface SettingsDrawerProps {
   gatewayToken: string;
   onUrlChange: (url: string) => void;
   onTokenChange: (token: string) => void;
+  // File proxy settings
+  apiKey: string;
+  apiUrl: string;
+  onApiKeyChange: (key: string) => void;
+  onApiUrlChange: (url: string) => void;
   onReconnect: () => void;
-  connectionState: 'disconnected' | 'connecting' | 'connected' | 'reconnecting';
+  connectionState: "disconnected" | "connecting" | "connected" | "reconnecting";
   // Audio settings
   soundEnabled: boolean;
   onToggleSound: () => void;
@@ -42,24 +47,28 @@ interface SettingsDrawerProps {
   gatewayRestarting?: boolean;
 }
 
-type SettingsCategory = 'advanced' | 'audio' | 'appearance';
-type LegacySettingsCategory = SettingsCategory | 'audio-input' | 'voice-output';
+type SettingsCategory = "advanced" | "audio" | "appearance";
+type LegacySettingsCategory = SettingsCategory | "audio-input" | "voice-output";
 
-const SETTINGS_CATEGORY_KEY = 'nerve:settings-category';
+const SETTINGS_CATEGORY_KEY = "nerve:settings-category";
 
 function normalizeSavedCategory(value: string | null): SettingsCategory | null {
   const raw = value as LegacySettingsCategory | null;
   if (!raw) return null;
-  if (raw === 'audio-input' || raw === 'voice-output') return 'audio';
-  if (raw === 'advanced' || raw === 'audio' || raw === 'appearance') return raw;
+  if (raw === "audio-input" || raw === "voice-output") return "audio";
+  if (raw === "advanced" || raw === "audio" || raw === "appearance") return raw;
   return null;
 }
 
 const SETTINGS_CATEGORIES = [
-  { key: 'advanced', label: 'Connection', icon: Shield },
-  { key: 'audio', label: 'Audio', icon: Mic },
-  { key: 'appearance', label: 'Appearance', icon: Monitor },
-] as const satisfies ReadonlyArray<{ key: SettingsCategory; label: string; icon: typeof Mic }>;
+  { key: "advanced", label: "Connection", icon: Shield },
+  { key: "audio", label: "Audio", icon: Mic },
+  { key: "appearance", label: "Appearance", icon: Monitor },
+] as const satisfies ReadonlyArray<{
+  key: SettingsCategory;
+  label: string;
+  icon: typeof Mic;
+}>;
 
 /** Slide-in drawer containing connection, audio, and appearance settings. */
 export function SettingsDrawer({
@@ -69,6 +78,10 @@ export function SettingsDrawer({
   gatewayToken,
   onUrlChange,
   onTokenChange,
+  apiKey,
+  apiUrl,
+  onApiKeyChange,
+  onApiUrlChange,
   onReconnect,
   connectionState,
   soundEnabled,
@@ -94,15 +107,21 @@ export function SettingsDrawer({
 }: SettingsDrawerProps) {
   const drawerRef = useRef<HTMLDivElement>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
-  const isConnected = connectionState === 'connected' || connectionState === 'reconnecting';
+  const isConnected =
+    connectionState === "connected" || connectionState === "reconnecting";
   const [activeCategory, setActiveCategory] = useState<SettingsCategory>(() => {
     try {
-      return normalizeSavedCategory(localStorage.getItem(SETTINGS_CATEGORY_KEY)) || 'advanced';
+      return (
+        normalizeSavedCategory(localStorage.getItem(SETTINGS_CATEGORY_KEY)) ||
+        "advanced"
+      );
     } catch {
-      return 'advanced';
+      return "advanced";
     }
   });
-  const currentCategory: SettingsCategory = isConnected ? activeCategory : 'advanced';
+  const currentCategory: SettingsCategory = isConnected
+    ? activeCategory
+    : "advanced";
 
   // Persist the user's preferred category once connected.
   useEffect(() => {
@@ -116,18 +135,21 @@ export function SettingsDrawer({
   }, [activeCategory, isConnected]);
 
   // Handle escape key
-  const handleKeyDown = useCallback((e: KeyboardEvent) => {
-    if (e.key === 'Escape') {
-      onClose();
-    }
-  }, [onClose]);
+  const handleKeyDown = useCallback(
+    (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        onClose();
+      }
+    },
+    [onClose],
+  );
 
   // Focus trap - keep focus within the drawer
   const handleTabKey = useCallback((e: KeyboardEvent) => {
-    if (e.key !== 'Tab' || !drawerRef.current) return;
-    
+    if (e.key !== "Tab" || !drawerRef.current) return;
+
     const focusableElements = drawerRef.current.querySelectorAll<HTMLElement>(
-      'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+      'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
     );
     const firstElement = focusableElements[0];
     const lastElement = focusableElements[focusableElements.length - 1];
@@ -143,13 +165,13 @@ export function SettingsDrawer({
 
   useEffect(() => {
     if (open) {
-      document.addEventListener('keydown', handleKeyDown);
-      document.addEventListener('keydown', handleTabKey);
+      document.addEventListener("keydown", handleKeyDown);
+      document.addEventListener("keydown", handleTabKey);
       // Focus the close button when drawer opens
       closeButtonRef.current?.focus();
       return () => {
-        document.removeEventListener('keydown', handleKeyDown);
-        document.removeEventListener('keydown', handleTabKey);
+        document.removeEventListener("keydown", handleKeyDown);
+        document.removeEventListener("keydown", handleTabKey);
       };
     }
   }, [open, handleKeyDown, handleTabKey]);
@@ -176,7 +198,10 @@ export function SettingsDrawer({
         <div className="flex items-center justify-between px-4 py-3 border-b border-border bg-card shrink-0">
           <div className="flex items-center gap-2">
             <Settings size={14} className="text-primary" aria-hidden="true" />
-            <span id="settings-title" className="text-[11px] font-bold tracking-[2px] uppercase text-primary">
+            <span
+              id="settings-title"
+              className="text-[11px] font-bold tracking-[2px] uppercase text-primary"
+            >
               SETTINGS
             </span>
           </div>
@@ -194,11 +219,15 @@ export function SettingsDrawer({
         {/* Content */}
         <div className="flex-1 overflow-hidden flex flex-col">
           <div className="border-b border-border/50 bg-background/30 p-2 shrink-0">
-            <div className="flex gap-1 overflow-x-auto" role="tablist" aria-label="Settings categories">
+            <div
+              className="flex gap-1 overflow-x-auto"
+              role="tablist"
+              aria-label="Settings categories"
+            >
               {SETTINGS_CATEGORIES.map((category) => {
                 const Icon = category.icon;
                 const isActive = currentCategory === category.key;
-                const disabled = !isConnected && category.key !== 'advanced';
+                const disabled = !isConnected && category.key !== "advanced";
                 return (
                   <button
                     key={category.key}
@@ -208,9 +237,9 @@ export function SettingsDrawer({
                     onClick={() => setActiveCategory(category.key)}
                     className={`shrink-0 flex items-center gap-2 px-2.5 py-2 text-[11px] font-mono uppercase tracking-wide border transition-colors whitespace-nowrap ${
                       isActive
-                        ? 'bg-primary/20 border-primary text-primary'
-                        : 'bg-card border-border/60 text-muted-foreground hover:border-muted-foreground hover:text-foreground'
-                    } ${disabled ? 'opacity-50 cursor-not-allowed hover:border-border/60 hover:text-muted-foreground' : ''}`}
+                        ? "bg-primary/20 border-primary text-primary"
+                        : "bg-card border-border/60 text-muted-foreground hover:border-muted-foreground hover:text-foreground"
+                    } ${disabled ? "opacity-50 cursor-not-allowed hover:border-border/60 hover:text-muted-foreground" : ""}`}
                   >
                     <Icon size={12} aria-hidden="true" />
                     <span>{category.label}</span>
@@ -221,7 +250,7 @@ export function SettingsDrawer({
           </div>
 
           <div className="flex-1 overflow-y-auto p-4">
-            {currentCategory === 'audio' && (
+            {currentCategory === "audio" && (
               <AudioSettings
                 section="all"
                 soundEnabled={soundEnabled}
@@ -239,14 +268,16 @@ export function SettingsDrawer({
                 wakeWordEnabled={wakeWordEnabled}
                 onToggleWakeWord={onToggleWakeWord}
                 liveTranscriptionPreview={liveTranscriptionPreview}
-                onToggleLiveTranscriptionPreview={onToggleLiveTranscriptionPreview}
+                onToggleLiveTranscriptionPreview={
+                  onToggleLiveTranscriptionPreview
+                }
                 agentName={agentName}
               />
             )}
 
-            {currentCategory === 'appearance' && <AppearanceSettings />}
+            {currentCategory === "appearance" && <AppearanceSettings />}
 
-            {currentCategory === 'advanced' && (
+            {currentCategory === "advanced" && (
               <ConnectionSettings
                 url={gatewayUrl}
                 token={gatewayToken}
@@ -254,6 +285,10 @@ export function SettingsDrawer({
                 onTokenChange={onTokenChange}
                 onReconnect={onReconnect}
                 connectionState={connectionState}
+                apiKey={apiKey}
+                apiUrl={apiUrl}
+                onApiKeyChange={onApiKeyChange}
+                onApiUrlChange={onApiUrlChange}
                 onGatewayRestart={onGatewayRestart}
                 gatewayRestarting={gatewayRestarting}
               />

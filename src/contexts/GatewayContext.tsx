@@ -1,12 +1,21 @@
 /* eslint-disable react-refresh/only-export-components -- hooks and helpers intentionally co-located with provider */
-import { createContext, useContext, useCallback, useRef, useEffect, useState, useMemo, type ReactNode } from 'react';
-import { useWebSocket } from '@/hooks/useWebSocket';
-import type { GatewayEvent } from '@/types';
+import {
+  createContext,
+  useContext,
+  useCallback,
+  useRef,
+  useEffect,
+  useState,
+  useMemo,
+  type ReactNode,
+} from "react";
+import { useWebSocket } from "@/hooks/useWebSocket";
+import type { GatewayEvent } from "@/types";
 
 type EventHandler = (msg: GatewayEvent) => void;
 
 interface GatewayContextValue {
-  connectionState: 'disconnected' | 'connecting' | 'connected' | 'reconnecting';
+  connectionState: "disconnected" | "connecting" | "connected" | "reconnecting";
   connect: (url: string, token: string) => Promise<void>;
   disconnect: () => void;
   rpc: (method: string, params?: Record<string, unknown>) => Promise<unknown>;
@@ -28,23 +37,43 @@ const GatewayContext = createContext<GatewayContextValue | null>(null);
  * which broke model selection when the gateway reported models under
  * providers not in the strip list (e.g. "openai-codex/gpt-5.2-codex").
  */
-const normalizeModel = (m: string) => m.trim() || '--';
+const normalizeModel = (m: string) => m.trim() || "--";
 
 // Security: Use sessionStorage instead of localStorage for auth credentials.
 // sessionStorage is cleared when the browser tab closes, reducing exposure if
 // the device is shared or left unattended. localStorage persists indefinitely.
 function loadConfig() {
-  try { return JSON.parse(localStorage.getItem('oc-config') || '{}'); } catch { return {}; }
+  try {
+    return JSON.parse(localStorage.getItem("oc-config") || "{}");
+  } catch {
+    return {};
+  }
 }
-function saveConfig(url: string, token: string) {
-  localStorage.setItem('oc-config', JSON.stringify({ url, token }));
+function saveConfig(
+  url: string,
+  token: string,
+  apiKey?: string,
+  apiUrl?: string,
+) {
+  const config: Record<string, string> = { url, token };
+  if (apiKey) config.apiKey = apiKey;
+  if (apiUrl) config.apiUrl = apiUrl;
+  localStorage.setItem("oc-config", JSON.stringify(config));
 }
 
 export function GatewayProvider({ children }: { children: ReactNode }) {
-  const { connectionState, connect: wsConnect, disconnect, rpc, onEvent, connectError, reconnectAttempt } = useWebSocket();
-  const [model, setModel] = useState('--');
-  const [thinking, setThinking] = useState('--');
-  const [sparkline, setSparkline] = useState('▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁');
+  const {
+    connectionState,
+    connect: wsConnect,
+    disconnect,
+    rpc,
+    onEvent,
+    connectError,
+    reconnectAttempt,
+  } = useWebSocket();
+  const [model, setModel] = useState("--");
+  const [thinking, setThinking] = useState("--");
+  const [sparkline, setSparkline] = useState("▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁");
   const activityBuckets = useRef<number[]>(new Array(30).fill(0));
   const currentBucketEvents = useRef(0);
   const isVisibleRef = useRef(true);
@@ -52,15 +81,20 @@ export function GatewayProvider({ children }: { children: ReactNode }) {
 
   // Track page visibility
   useEffect(() => {
-    const handleVisibility = () => { isVisibleRef.current = document.visibilityState === 'visible'; };
-    document.addEventListener('visibilitychange', handleVisibility);
-    return () => document.removeEventListener('visibilitychange', handleVisibility);
+    const handleVisibility = () => {
+      isVisibleRef.current = document.visibilityState === "visible";
+    };
+    document.addEventListener("visibilitychange", handleVisibility);
+    return () =>
+      document.removeEventListener("visibilitychange", handleVisibility);
   }, []);
 
   // Subscribe/unsubscribe pattern for event listeners
   const subscribe = useCallback((handler: EventHandler) => {
     subscribersRef.current.add(handler);
-    return () => { subscribersRef.current.delete(handler); };
+    return () => {
+      subscribersRef.current.delete(handler);
+    };
   }, []);
 
   // Wire up the single onEvent ref to fan out to all subscribers
@@ -69,60 +103,93 @@ export function GatewayProvider({ children }: { children: ReactNode }) {
     onEvent.current = (msg: GatewayEvent) => {
       currentBucketEvents.current++;
       for (const handler of subscribersRef.current) {
-        try { handler(msg); } catch (e) { console.error('[GatewayContext] event handler error:', e); }
+        try {
+          handler(msg);
+        } catch (e) {
+          console.error("[GatewayContext] event handler error:", e);
+        }
       }
     };
-    return () => { onEvent.current = null; };
+    return () => {
+      onEvent.current = null;
+    };
   }, [onEvent]);
 
   const rpcRef = useRef(rpc);
-  useEffect(() => { rpcRef.current = rpc; }, [rpc]);
+  useEffect(() => {
+    rpcRef.current = rpc;
+  }, [rpc]);
 
   const updateStatus = useCallback(async () => {
     const currentRpc = rpcRef.current;
     try {
-      const h = await currentRpc('status', {}) as Record<string, unknown>;
+      const h = (await currentRpc("status", {})) as Record<string, unknown>;
       const agent = h?.agent as Record<string, unknown> | undefined;
       const config = h?.config as Record<string, unknown> | undefined;
-      let clean = normalizeModel(String(agent?.model || h?.model || config?.model || h?.defaultModel || '--'));
+      let clean = normalizeModel(
+        String(
+          agent?.model || h?.model || config?.model || h?.defaultModel || "--",
+        ),
+      );
 
       // Extract thinking/effort level from status response
       const rawThinking = String(
-        agent?.thinking || config?.thinking || h?.thinking || ''
-      ).trim().toLowerCase();
-      const hasThinking = rawThinking && rawThinking !== 'undefined' && rawThinking !== 'null';
+        agent?.thinking || config?.thinking || h?.thinking || "",
+      )
+        .trim()
+        .toLowerCase();
+      const hasThinking =
+        rawThinking && rawThinking !== "undefined" && rawThinking !== "null";
 
       // Fallback to sessions.list for model and/or thinking (single RPC call for both)
-      if (clean === '--' || !hasThinking) {
+      if (clean === "--" || !hasThinking) {
         try {
-          const sr = await currentRpc('sessions.list', { activeMinutes: 120, limit: 50 }) as Record<string, unknown>;
-          const list = (sr?.sessions as Array<{ sessionKey?: string; key?: string; model?: string; thinking?: string }>) || [];
-          const main = list.find(s => (s.sessionKey || s.key) === 'agent:main:main');
-          if (clean === '--' && main?.model) clean = normalizeModel(main.model);
+          const sr = (await currentRpc("sessions.list", {
+            activeMinutes: 120,
+            limit: 50,
+          })) as Record<string, unknown>;
+          const list =
+            (sr?.sessions as Array<{
+              sessionKey?: string;
+              key?: string;
+              model?: string;
+              thinking?: string;
+            }>) || [];
+          const main = list.find(
+            (s) => (s.sessionKey || s.key) === "agent:main:main",
+          );
+          if (clean === "--" && main?.model) clean = normalizeModel(main.model);
           if (!hasThinking && main?.thinking) {
             setThinking(main.thinking.toLowerCase());
           }
-        } catch { /* fallback to '--' */ }
+        } catch {
+          /* fallback to '--' */
+        }
       }
 
       setModel(clean);
       if (hasThinking) setThinking(rawThinking);
     } catch (err) {
-      console.debug('[GatewayContext] Failed to poll status:', err);
+      console.debug("[GatewayContext] Failed to poll status:", err);
     }
 
     // Update activity sparkline
     activityBuckets.current.push(currentBucketEvents.current);
     currentBucketEvents.current = 0;
     if (activityBuckets.current.length > 30) activityBuckets.current.shift();
-    const blocks = '▁▂▃▄▅▆▇█';
+    const blocks = "▁▂▃▄▅▆▇█";
     const max = Math.max(1, ...activityBuckets.current);
-    setSparkline(activityBuckets.current.slice(-15).map(v => blocks[Math.min(7, Math.floor((v / max) * 7))]).join(''));
+    setSparkline(
+      activityBuckets.current
+        .slice(-15)
+        .map((v) => blocks[Math.min(7, Math.floor((v / max) * 7))])
+        .join(""),
+    );
   }, []);
 
   // Poll status when connected
   useEffect(() => {
-    if (connectionState !== 'connected') return;
+    if (connectionState !== "connected") return;
     updateStatus();
     const iv = setInterval(() => {
       if (isVisibleRef.current) updateStatus();
@@ -130,36 +197,53 @@ export function GatewayProvider({ children }: { children: ReactNode }) {
     return () => clearInterval(iv);
   }, [connectionState, updateStatus]);
 
-  // Wrap connect to save config
-  const connect = useCallback(async (url: string, token: string) => {
-    saveConfig(url, token);
-    await wsConnect(url, token);
-  }, [wsConnect]);
+  // Wrap connect to save config (preserve existing proxy credentials)
+  const connect = useCallback(
+    async (url: string, token: string) => {
+      const existing = loadConfig();
+      saveConfig(url, token, existing.apiKey, existing.apiUrl);
+      await wsConnect(url, token);
+    },
+    [wsConnect],
+  );
 
-  const value = useMemo<GatewayContextValue>(() => ({
-    connectionState,
-    connect,
-    disconnect,
-    rpc,
-    connectError,
-    reconnectAttempt,
-    model,
-    thinking,
-    sparkline,
-    isVisibleRef,
-    subscribe,
-  }), [
-    connectionState, connect, disconnect, rpc, connectError,
-    reconnectAttempt, model, thinking, sparkline, subscribe,
-    // isVisibleRef is a stable ref — no need to track
-  ]);
+  const value = useMemo<GatewayContextValue>(
+    () => ({
+      connectionState,
+      connect,
+      disconnect,
+      rpc,
+      connectError,
+      reconnectAttempt,
+      model,
+      thinking,
+      sparkline,
+      isVisibleRef,
+      subscribe,
+    }),
+    [
+      connectionState,
+      connect,
+      disconnect,
+      rpc,
+      connectError,
+      reconnectAttempt,
+      model,
+      thinking,
+      sparkline,
+      subscribe,
+      // isVisibleRef is a stable ref — no need to track
+    ],
+  );
 
-  return <GatewayContext.Provider value={value}>{children}</GatewayContext.Provider>;
+  return (
+    <GatewayContext.Provider value={value}>{children}</GatewayContext.Provider>
+  );
 }
 
 export function useGateway() {
   const ctx = useContext(GatewayContext);
-  if (!ctx) throw new Error('useGateway must be used within GatewayProvider');
+  if (!ctx) throw new Error("useGateway must be used within GatewayProvider");
   return ctx;
 }
 

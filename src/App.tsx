@@ -157,6 +157,10 @@ export default function App({ onLogout }: AppProps) {
     setEditableUrl,
     editableToken,
     setEditableToken,
+    editableApiKey,
+    setEditableApiKey,
+    editableApiUrl,
+    setEditableApiUrl,
     handleConnect,
     handleReconnect,
   } = useConnectionManager();
@@ -677,6 +681,10 @@ export default function App({ onLogout }: AppProps) {
             gatewayToken={editableToken}
             onUrlChange={setEditableUrl}
             onTokenChange={setEditableToken}
+            apiKey={editableApiKey}
+            apiUrl={editableApiUrl}
+            onApiKeyChange={setEditableApiKey}
+            onApiUrlChange={setEditableApiUrl}
             onReconnect={handleReconnect}
             connectionState={connectionState}
             soundEnabled={soundEnabled}

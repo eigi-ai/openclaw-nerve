@@ -6,16 +6,20 @@
  * When auth is disabled or the user is authenticated, the app renders normally.
  * When auth is enabled and the user is unauthenticated, the login page is shown.
  */
-import { StrictMode } from 'react'
-import { createRoot } from 'react-dom/client'
-import './index.css'
-import { ErrorBoundary } from '@/components/ErrorBoundary'
-import { AuthGate } from '@/features/auth'
+import { StrictMode } from "react";
+import { createRoot } from "react-dom/client";
+import "./index.css";
+import { ErrorBoundary } from "@/components/ErrorBoundary";
+import { AuthGate } from "@/features/auth";
+import { installProxyFetchInterceptor } from "@/lib/proxy-fetch";
 
-createRoot(document.getElementById('root')!).render(
+// Install fetch interceptor for remote proxy mode before any API calls
+installProxyFetchInterceptor();
+
+createRoot(document.getElementById("root")!).render(
   <ErrorBoundary>
     <StrictMode>
       <AuthGate />
     </StrictMode>
   </ErrorBoundary>,
-)
+);
