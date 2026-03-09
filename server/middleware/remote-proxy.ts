@@ -37,6 +37,13 @@ import {
   proxyDeleteMemory,
   proxyGetSessionModel,
   proxyGetTokenUsage,
+  proxyCronList,
+  proxyCronAdd,
+  proxyCronUpdate,
+  proxyCronRemove,
+  proxyCronToggle,
+  proxyCronRun,
+  proxyCronGetRuns,
   type ProxyCredentials,
 } from "../lib/orchestrator-client.js";
 
@@ -272,6 +279,75 @@ const routes: RouteMatch[] = [
     pattern: /^\/api\/tokens$/,
     handler: async (c, creds) => {
       const result = await proxyGetTokenUsage(creds);
+      return c.json(result);
+    },
+  },
+
+  // ── Cron ───────────────────────────────────────────────
+  {
+    method: "GET",
+    pattern: /^\/api\/crons$/,
+    handler: async (c, creds) => {
+      const result = await proxyCronList(creds);
+      return c.json(result);
+    },
+  },
+  {
+    method: "POST",
+    pattern: /^\/api\/crons$/,
+    handler: async (c, creds) => {
+      const body = await c.req.json();
+      const result = await proxyCronAdd(creds, body.job);
+      return c.json(result);
+    },
+  },
+  {
+    method: "PATCH",
+    pattern: /^\/api\/crons\/([^/]+)$/,
+    handler: async (c, creds) => {
+      const jobId = c.req.path.split("/").pop()!;
+      const body = await c.req.json();
+      const result = await proxyCronUpdate(creds, jobId, body.patch);
+      return c.json(result);
+    },
+  },
+  {
+    method: "DELETE",
+    pattern: /^\/api\/crons\/([^/]+)$/,
+    handler: async (c, creds) => {
+      const jobId = c.req.path.split("/").pop()!;
+      const result = await proxyCronRemove(creds, jobId);
+      return c.json(result);
+    },
+  },
+  {
+    method: "POST",
+    pattern: /^\/api\/crons\/([^/]+)\/toggle$/,
+    handler: async (c, creds) => {
+      const parts = c.req.path.split("/");
+      const jobId = parts[parts.length - 2];
+      const body = await c.req.json().catch(() => ({ enabled: true }));
+      const result = await proxyCronToggle(creds, jobId, body.enabled);
+      return c.json(result);
+    },
+  },
+  {
+    method: "POST",
+    pattern: /^\/api\/crons\/([^/]+)\/run$/,
+    handler: async (c, creds) => {
+      const parts = c.req.path.split("/");
+      const jobId = parts[parts.length - 2];
+      const result = await proxyCronRun(creds, jobId);
+      return c.json(result);
+    },
+  },
+  {
+    method: "GET",
+    pattern: /^\/api\/crons\/([^/]+)\/runs$/,
+    handler: async (c, creds) => {
+      const parts = c.req.path.split("/");
+      const jobId = parts[parts.length - 2];
+      const result = await proxyCronGetRuns(creds, jobId);
       return c.json(result);
     },
   },

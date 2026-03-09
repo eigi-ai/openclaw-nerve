@@ -271,3 +271,83 @@ export async function proxyGetTokenUsage(
 ): Promise<ProxyResponse> {
   return (await proxyFetch("GET", "/proxy/tokens", creds)) as ProxyResponse;
 }
+
+// ── Cron (gateway tool proxy) ───────────────────────────────────────
+
+export async function proxyCronList(
+  creds: ProxyCredentials,
+): Promise<ProxyResponse> {
+  return (await proxyFetch("GET", "/proxy/crons", creds)) as ProxyResponse;
+}
+
+export async function proxyCronAdd(
+  creds: ProxyCredentials,
+  job: Record<string, unknown>,
+): Promise<ProxyResponse> {
+  return (await proxyFetch("POST", "/proxy/crons", creds, {
+    body: { job },
+    timeoutMs: 30_000,
+  })) as ProxyResponse;
+}
+
+export async function proxyCronUpdate(
+  creds: ProxyCredentials,
+  jobId: string,
+  patch: Record<string, unknown>,
+): Promise<ProxyResponse> {
+  return (await proxyFetch(
+    "PATCH",
+    `/proxy/crons/${encodeURIComponent(jobId)}`,
+    creds,
+    { body: { patch } },
+  )) as ProxyResponse;
+}
+
+export async function proxyCronRemove(
+  creds: ProxyCredentials,
+  jobId: string,
+): Promise<ProxyResponse> {
+  return (await proxyFetch(
+    "DELETE",
+    `/proxy/crons/${encodeURIComponent(jobId)}`,
+    creds,
+  )) as ProxyResponse;
+}
+
+export async function proxyCronToggle(
+  creds: ProxyCredentials,
+  jobId: string,
+  enabled: boolean,
+): Promise<ProxyResponse> {
+  return (await proxyFetch(
+    "POST",
+    `/proxy/crons/${encodeURIComponent(jobId)}/toggle`,
+    creds,
+    { body: { patch: { enabled } } },
+  )) as ProxyResponse;
+}
+
+export async function proxyCronRun(
+  creds: ProxyCredentials,
+  jobId: string,
+): Promise<ProxyResponse> {
+  return (await proxyFetch(
+    "POST",
+    `/proxy/crons/${encodeURIComponent(jobId)}/run`,
+    creds,
+    { timeoutMs: 90_000 },
+  )) as ProxyResponse;
+}
+
+export async function proxyCronGetRuns(
+  creds: ProxyCredentials,
+  jobId: string,
+  limit = 10,
+): Promise<ProxyResponse> {
+  return (await proxyFetch(
+    "GET",
+    `/proxy/crons/${encodeURIComponent(jobId)}/runs`,
+    creds,
+    { query: { limit } },
+  )) as ProxyResponse;
+}
