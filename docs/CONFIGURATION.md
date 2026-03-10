@@ -249,6 +249,7 @@ REPLICATE_BASE_URL=https://api.replicate.com/v1
 | `SESSIONS_DIR` | `~/.openclaw/agents/main/sessions/` | Session transcript directory (scanned for token usage) |
 | `USAGE_FILE` | `~/.openclaw/token-usage.json` | Persistent cumulative token usage data |
 | `NERVE_VOICE_PHRASES_PATH` | `~/.nerve/voice-phrases.json` | Override location for per-language voice phrase overrides |
+| `NERVE_WATCH_WORKSPACE_RECURSIVE` | `false` | Enables recursive `fs.watch` for the entire workspace (legacy behavior). Disabled by default to prevent Linux inotify `ENOSPC` watcher exhaustion. |
 | `WORKSPACE_ROOT` | *(auto-detected)* | Allowed base directory for git workdir registration. Auto-derived from `git worktree list` or parent of `process.cwd()` |
 
 ```env
@@ -256,6 +257,7 @@ MEMORY_PATH=/custom/path/MEMORY.md
 MEMORY_DIR=/custom/path/memory/
 SESSIONS_DIR=/custom/path/sessions/
 NERVE_VOICE_PHRASES_PATH=/custom/path/voice-phrases.json
+NERVE_WATCH_WORKSPACE_RECURSIVE=false
 ```
 
 ### TTS Cache

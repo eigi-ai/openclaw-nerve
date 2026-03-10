@@ -22,6 +22,9 @@ interface GatewayContextValue {
 
 const GatewayContext = createContext<GatewayContextValue | null>(null);
 
+const SESSIONS_ACTIVE_MINUTES = 24 * 60;
+const SESSIONS_LIMIT = 200;
+
 /**
  * Normalize a model ref to a consistent string, but preserve the full
  * provider/model format.  Previous versions stripped the provider prefix,
@@ -95,7 +98,7 @@ export function GatewayProvider({ children }: { children: ReactNode }) {
       // Fallback to sessions.list for model and/or thinking (single RPC call for both)
       if (clean === '--' || !hasThinking) {
         try {
-          const sr = await currentRpc('sessions.list', { activeMinutes: 120, limit: 50 }) as Record<string, unknown>;
+          const sr = await currentRpc('sessions.list', { activeMinutes: SESSIONS_ACTIVE_MINUTES, limit: SESSIONS_LIMIT }) as Record<string, unknown>;
           const list = (sr?.sessions as Array<{ sessionKey?: string; key?: string; model?: string; thinking?: string }>) || [];
           const main = list.find(s => (s.sessionKey || s.key) === 'agent:main:main');
           if (clean === '--' && main?.model) clean = normalizeModel(main.model);

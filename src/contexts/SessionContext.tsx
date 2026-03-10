@@ -7,6 +7,11 @@ import { describeToolUse } from '@/utils/helpers';
 const BUSY_STATES = new Set(['running', 'thinking', 'tool_use', 'delta', 'started']);
 const IDLE_STATES = new Set(['idle', 'done', 'error', 'final', 'aborted', 'completed']);
 
+// sessions.list query defaults.
+// Wider window + higher cap avoids dropping subagents from the sidebar in busy workspaces.
+const SESSIONS_ACTIVE_MINUTES = 24 * 60; // 24h
+const SESSIONS_LIMIT = 200;
+
 interface SpawnAgentOpts {
   task: string;
   label?: string;
@@ -326,7 +331,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   const refreshSessions = useCallback(async () => {
     if (connectionState !== 'connected') return;
     try {
-      const res = await rpc('sessions.list', { activeMinutes: 120, limit: 50 }) as SessionsListResponse;
+      const res = await rpc('sessions.list', { activeMinutes: SESSIONS_ACTIVE_MINUTES, limit: SESSIONS_LIMIT }) as SessionsListResponse;
       const newSessions = res?.sessions || [];
       
       // Smart diffing: preserve object references for unchanged sessions.
@@ -591,7 +596,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     while (Date.now() < deadline) {
       await new Promise(r => setTimeout(r, 2000));
       try {
-        const res = await rpc('sessions.list', { activeMinutes: 120, limit: 50 }) as { sessions?: Array<{ sessionKey?: string; key?: string; id?: string }> };
+        const res = await rpc('sessions.list', { activeMinutes: SESSIONS_ACTIVE_MINUTES, limit: SESSIONS_LIMIT }) as { sessions?: Array<{ sessionKey?: string; key?: string; id?: string }> };
         const fresh = res?.sessions ?? [];
         const newSession = fresh.find(s => {
           const sk = s.sessionKey || s.key || s.id || '';
