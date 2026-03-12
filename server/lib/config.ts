@@ -190,15 +190,38 @@ export function updateConfig<K extends keyof MutableConfigMap>(
 /** Session cookie name — suffixed with port to avoid collisions when running multiple instances. */
 export const SESSION_COOKIE_NAME = `nerve_session_${config.port}`;
 
-/** WebSocket proxy allowed hostnames (extend via WS_ALLOWED_HOSTS env var, comma-separated) */
-export const WS_ALLOWED_HOSTS = new Set([
+/** WebSocket proxy allowed hostnames/patterns (supports wildcard "*.example.com"). */
+const wsAllowedHostPatterns = [
   "localhost",
   "127.0.0.1",
   "::1",
   ...(process.env.WS_ALLOWED_HOSTS?.split(",")
-    .map((h) => h.trim())
+    .map((h) => h.trim().toLowerCase())
     .filter(Boolean) ?? []),
-]);
+];
+
+/** Backward-compatible export of allowed entries (exact hosts and wildcard patterns). */
+export const WS_ALLOWED_HOSTS = new Set(wsAllowedHostPatterns);
+
+/** Check whether a target hostname is allowed by exact match or wildcard suffix rule. */
+export function isAllowedWsHost(hostname: string): boolean {
+  const normalized = hostname.trim().toLowerCase();
+  if (!normalized) return false;
+
+  for (const allowed of WS_ALLOWED_HOSTS) {
+    if (allowed.startsWith("*.")) {
+      const suffix = allowed.slice(1); // ".example.com"
+      if (normalized.endsWith(suffix) && normalized.length > suffix.length) {
+        return true;
+      }
+      continue;
+    }
+
+    if (normalized === allowed) return true;
+  }
+
+  return false;
+}
 
 /** Resolve the TTS provider label for the startup banner. */
 function ttsProviderLabel(): string {

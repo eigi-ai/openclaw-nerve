@@ -7,6 +7,7 @@ import { MockGateway } from '../../src/test/mock-gateway.js';
 // Mock config before importing ws-proxy
 vi.mock('./config.js', () => {
   const WS_ALLOWED_HOSTS = new Set(['localhost', '127.0.0.1', '::1']);
+  const isAllowedWsHost = (hostname: string) => WS_ALLOWED_HOSTS.has(hostname);
   return {
     config: {
       auth: false,
@@ -14,6 +15,7 @@ vi.mock('./config.js', () => {
       gatewayToken: 'test-token',
     },
     WS_ALLOWED_HOSTS,
+    isAllowedWsHost,
     SESSION_COOKIE_NAME: 'nerve_session_3080',
   };
 });

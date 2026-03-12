@@ -21,7 +21,7 @@ import type { Duplex } from 'node:stream';
 import { execFile } from 'node:child_process';
 import { dirname } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { config, WS_ALLOWED_HOSTS, SESSION_COOKIE_NAME } from './config.js';
+import { config, isAllowedWsHost, SESSION_COOKIE_NAME } from './config.js';
 import { verifySession, parseSessionCookie } from './session.js';
 import { createDeviceBlock, getDeviceIdentity } from './device-identity.js';
 import { resolveOpenclawBin } from './openclaw-bin.js';
@@ -126,7 +126,7 @@ export function setupWebSocketProxy(server: HttpServer | HttpsServer): void {
       return;
     }
 
-    if (!['ws:', 'wss:'].includes(targetUrl.protocol) || !WS_ALLOWED_HOSTS.has(targetUrl.hostname)) {
+    if (!['ws:', 'wss:'].includes(targetUrl.protocol) || !isAllowedWsHost(targetUrl.hostname)) {
       console.warn(`${tag} Rejected: target not allowed: ${target}`);
       clientWs.close(1008, 'Target not allowed');
       return;

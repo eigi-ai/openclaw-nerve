@@ -74,6 +74,24 @@ describe('config module', () => {
     });
   });
 
+  describe('isAllowedWsHost', () => {
+    it('allows exact localhost', async () => {
+      const { isAllowedWsHost } = await import('./config.js');
+      expect(isAllowedWsHost('localhost')).toBe(true);
+      expect(isAllowedWsHost('127.0.0.1')).toBe(true);
+    });
+
+    it('supports wildcard domain entries in WS_ALLOWED_HOSTS', async () => {
+      process.env.WS_ALLOWED_HOSTS = '*.eigi.ai';
+      vi.resetModules();
+      const { isAllowedWsHost } = await import('./config.js');
+      expect(isAllowedWsHost('dev-claw-04.eigi.ai')).toBe(true);
+      expect(isAllowedWsHost('claw.eigi.ai')).toBe(true);
+      expect(isAllowedWsHost('eigi.ai')).toBe(false);
+      expect(isAllowedWsHost('evil.com')).toBe(false);
+    });
+  });
+
   describe('limits', () => {
     it('has reasonable TTS limit', async () => {
       const { config } = await import('./config.js');
