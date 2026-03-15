@@ -13,18 +13,19 @@
  * @module
  */
 
-import type { Server as HttpsServer } from 'node:https';
-import type { Server as HttpServer } from 'node:http';
-import { WebSocket, WebSocketServer } from 'ws';
-import type { IncomingMessage } from 'node:http';
-import type { Duplex } from 'node:stream';
-import { execFile } from 'node:child_process';
-import { dirname } from 'node:path';
-import { randomUUID } from 'node:crypto';
-import { config, WS_ALLOWED_HOSTS, SESSION_COOKIE_NAME } from './config.js';
-import { verifySession, parseSessionCookie } from './session.js';
-import { createDeviceBlock, getDeviceIdentity } from './device-identity.js';
-import { resolveOpenclawBin } from './openclaw-bin.js';
+import type { Server as HttpsServer } from "node:https";
+import type { Server as HttpServer } from "node:http";
+import { WebSocket, WebSocketServer } from "ws";
+import type { IncomingMessage } from "node:http";
+import type { Duplex } from "node:stream";
+import { execFile } from "node:child_process";
+import { dirname } from "node:path";
+import { randomUUID } from "node:crypto";
+import { config, WS_ALLOWED_HOSTS, SESSION_COOKIE_NAME } from "./config.js";
+import { verifySession, parseSessionCookie } from "./session.js";
+import { createDeviceBlock, getDeviceIdentity } from "./device-identity.js";
+import { resolveOpenclawBin } from "./openclaw-bin.js";
+import { canInjectGatewayToken } from "./trust-utils.js";
 
 /** @internal — exported for test overrides */
 export const _internals = { challengeTimeoutMs: 5_000 };
@@ -34,34 +35,51 @@ export const _internals = { challengeTimeoutMs: 5_000 };
  * We intercept these and proxy via `openclaw gateway call` (full CLI scopes).
  */
 const RESTRICTED_METHODS = new Set([
-  'sessions.patch',
-  'sessions.delete',
-  'sessions.reset',
-  'sessions.compact',
+  "sessions.patch",
+  "sessions.delete",
+  "sessions.reset",
+  "sessions.compact",
 ]);
 
 /**
  * Execute a gateway RPC call via the CLI, bypassing webchat restrictions.
  */
-function gatewayCall(method: string, params: Record<string, unknown>): Promise<unknown> {
+function gatewayCall(
+  method: string,
+  params: Record<string, unknown>,
+): Promise<unknown> {
   return new Promise((resolve, reject) => {
     const bin = resolveOpenclawBin();
-    const args = ['gateway', 'call', method, '--params', JSON.stringify(params)];
+    const args = [
+      "gateway",
+      "call",
+      method,
+      "--params",
+      JSON.stringify(params),
+    ];
     // Ensure nvm/fnm/volta node is in PATH for #!/usr/bin/env node shebangs
     const nodeBinDir = dirname(process.execPath);
     const existingPath = process.env.PATH;
-    const env = { ...process.env, PATH: existingPath ? `${nodeBinDir}:${existingPath}` : nodeBinDir };
-    execFile(bin, args, { timeout: 10_000, maxBuffer: 1024 * 1024, env }, (err, stdout, stderr) => {
-      if (err) {
-        reject(new Error(stderr?.trim() || err.message));
-        return;
-      }
-      try {
-        resolve(JSON.parse(stdout));
-      } catch {
-        resolve({ ok: true, raw: stdout.trim() });
-      }
-    });
+    const env = {
+      ...process.env,
+      PATH: existingPath ? `${nodeBinDir}:${existingPath}` : nodeBinDir,
+    };
+    execFile(
+      bin,
+      args,
+      { timeout: 10_000, maxBuffer: 1024 * 1024, env },
+      (err, stdout, stderr) => {
+        if (err) {
+          reject(new Error(stderr?.trim() || err.message));
+          return;
+        }
+        try {
+          resolve(JSON.parse(stdout));
+        } catch {
+          resolve({ ok: true, raw: stdout.trim() });
+        }
+      },
+    );
   });
 }
 
@@ -71,7 +89,8 @@ const activeWssInstances: WebSocketServer[] = [];
 /** Close all active WebSocket connections */
 export function closeAllWebSockets(): void {
   for (const wss of activeWssInstances) {
-    for (const client of wss.clients) client.close(1001, 'Server shutting down');
+    for (const client of wss.clients)
+      client.close(1001, "Server shutting down");
     wss.close();
   }
   activeWssInstances.length = 0;
@@ -88,33 +107,40 @@ export function setupWebSocketProxy(server: HttpServer | HttpsServer): void {
   // Eagerly load device identity at startup
   getDeviceIdentity();
 
-  server.on('upgrade', (req: IncomingMessage, socket: Duplex, head: Buffer) => {
-    if (req.url?.startsWith('/ws')) {
+  server.on("upgrade", (req: IncomingMessage, socket: Duplex, head: Buffer) => {
+    if (req.url?.startsWith("/ws")) {
       // Auth check for WebSocket connections
       if (config.auth) {
-        const token = parseSessionCookie(req.headers.cookie, SESSION_COOKIE_NAME);
+        const token = parseSessionCookie(
+          req.headers.cookie,
+          SESSION_COOKIE_NAME,
+        );
         if (!token || !verifySession(token, config.sessionSecret)) {
-          socket.write('HTTP/1.1 401 Unauthorized\r\nContent-Type: text/plain\r\n\r\nAuthentication required');
+          socket.write(
+            "HTTP/1.1 401 Unauthorized\r\nContent-Type: text/plain\r\n\r\nAuthentication required",
+          );
           socket.destroy();
           return;
         }
       }
-      wss.handleUpgrade(req, socket, head, (ws) => wss.emit('connection', ws, req));
+      wss.handleUpgrade(req, socket, head, (ws) =>
+        wss.emit("connection", ws, req),
+      );
     } else {
       socket.destroy();
     }
   });
 
-  wss.on('connection', (clientWs: WebSocket, req: IncomingMessage) => {
+  wss.on("connection", (clientWs: WebSocket, req: IncomingMessage) => {
     const connId = randomUUID().slice(0, 8);
     const tag = `[ws-proxy:${connId}]`;
-    const url = new URL(req.url || '/', 'https://localhost');
-    const target = url.searchParams.get('target');
+    const url = new URL(req.url || "/", "https://localhost");
+    const target = url.searchParams.get("target");
 
     console.log(`${tag} New connection: target=${target}`);
 
     if (!target) {
-      clientWs.close(1008, 'Missing ?target= param');
+      clientWs.close(1008, "Missing ?target= param");
       return;
     }
 
@@ -122,30 +148,54 @@ export function setupWebSocketProxy(server: HttpServer | HttpsServer): void {
     try {
       targetUrl = new URL(target);
     } catch {
-      clientWs.close(1008, 'Invalid target URL');
+      clientWs.close(1008, "Invalid target URL");
       return;
     }
 
-    if (!['ws:', 'wss:'].includes(targetUrl.protocol) || !WS_ALLOWED_HOSTS.has(targetUrl.hostname)) {
+    if (
+      !["ws:", "wss:"].includes(targetUrl.protocol) ||
+      !WS_ALLOWED_HOSTS.has(targetUrl.hostname)
+    ) {
       console.warn(`${tag} Rejected: target not allowed: ${target}`);
-      clientWs.close(1008, 'Target not allowed');
+      clientWs.close(1008, "Target not allowed");
       return;
     }
 
-    const targetPort = Number(targetUrl.port) || (targetUrl.protocol === 'wss:' ? 443 : 80);
+    const targetPort =
+      Number(targetUrl.port) || (targetUrl.protocol === "wss:" ? 443 : 80);
     if (targetPort < 1 || targetPort > 65535) {
       console.warn(`${tag} Rejected: invalid port ${targetPort}`);
-      clientWs.close(1008, 'Invalid target port');
+      clientWs.close(1008, "Invalid target port");
       return;
     }
 
     // Forward origin header for gateway auth
-    const isEncrypted = !!(req.socket as unknown as { encrypted?: boolean }).encrypted;
-    const scheme = isEncrypted ? 'https' : 'http';
-    const clientOrigin = req.headers.origin || `${scheme}://${req.headers.host}`;
+    const isEncrypted = !!(req.socket as unknown as { encrypted?: boolean })
+      .encrypted;
+    const scheme = isEncrypted ? "https" : "http";
+    const clientOrigin =
+      req.headers.origin || `${scheme}://${req.headers.host}`;
 
-    createGatewayRelay(clientWs, targetUrl, clientOrigin, connId);
+    // Trusted local/authenticated clients can rely on server-side token injection.
+    const isTrusted = canInjectGatewayToken(req);
+    createGatewayRelay(clientWs, targetUrl, clientOrigin, connId, isTrusted);
   });
+}
+
+function isOfficialGatewayTarget(targetUrl: URL): boolean {
+  try {
+    const configured = new URL(config.gatewayUrl);
+    const targetPort =
+      Number(targetUrl.port) || (targetUrl.protocol === "wss:" ? 443 : 80);
+    const configuredPort =
+      Number(configured.port) || (configured.protocol === "https:" ? 443 : 80);
+    return (
+      targetUrl.hostname === configured.hostname &&
+      targetPort === configuredPort
+    );
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -165,6 +215,7 @@ function createGatewayRelay(
   targetUrl: URL,
   clientOrigin: string,
   connId: string,
+  isTrusted: boolean,
 ): void {
   const tag = `[ws-proxy:${connId}]`;
   const connStartTime = Date.now();
@@ -176,7 +227,9 @@ function createGatewayRelay(
   let clientAlive = true;
   let gatewayAlive = true;
 
-  clientWs.on('pong', () => { clientAlive = true; });
+  clientWs.on("pong", () => {
+    clientAlive = true;
+  });
 
   const pingTimer = setInterval(() => {
     // Check client
@@ -218,7 +271,8 @@ function createGatewayRelay(
 
   /** Queue a client message for deferred forwarding. Returns false if limits exceeded. */
   function enqueuePending(data: Buffer | string, isBinary: boolean): boolean {
-    const size = typeof data === 'string' ? Buffer.byteLength(data) : data.length;
+    const size =
+      typeof data === "string" ? Buffer.byteLength(data) : data.length;
     if (pending.length >= MAX_PENDING || pendingBytes + size > MAX_BYTES) {
       return false;
     }
@@ -254,10 +308,32 @@ function createGatewayRelay(
     if (gwWs.readyState !== WebSocket.OPEN) return;
     connectSent = true;
     clearChallengeTimer();
-    const modified = (useDeviceIdentity && nonce)
-      ? injectDeviceIdentity(savedConnectMsg, nonce)
-      : savedConnectMsg;
-    gwWs.send(JSON.stringify(modified));
+
+    let modified = savedConnectMsg;
+    // Keep browser tokens out of trusted official-gateway handshakes so stale
+    // localStorage values cannot trigger repeated NOT_PAIRED flows.
+    if (
+      isTrusted &&
+      config.gatewayToken &&
+      isOfficialGatewayTarget(targetUrl)
+    ) {
+      modified = {
+        ...modified,
+        params: {
+          ...((modified.params as object) || {}),
+          auth: {
+            ...((modified.params as { auth?: object } | undefined)?.auth || {}),
+            token: config.gatewayToken,
+          },
+        },
+      };
+    }
+
+    const final =
+      useDeviceIdentity && nonce
+        ? injectDeviceIdentity(modified, nonce)
+        : modified;
+    gwWs.send(JSON.stringify(final));
     handshakeComplete = true;
     flushPending();
   }
@@ -266,7 +342,9 @@ function createGatewayRelay(
   function startChallengeDeadline(): void {
     clearChallengeTimer();
     challengeTimer = setTimeout(() => {
-      console.log('[ws-proxy] Challenge nonce timeout — sending connect without device identity');
+      console.log(
+        "[ws-proxy] Challenge nonce timeout — sending connect without device identity",
+      );
       dispatchConnect(null);
     }, _internals.challengeTimeoutMs);
   }
@@ -282,22 +360,34 @@ function createGatewayRelay(
       headers: { Origin: clientOrigin },
     });
 
-    gwWs.on('pong', () => { gatewayAlive = true; });
+    gwWs.on("pong", () => {
+      gatewayAlive = true;
+    });
 
     // Gateway → Client
-    gwWs.on('message', (data: Buffer | string, isBinary: boolean) => {
+    gwWs.on("message", (data: Buffer | string, isBinary: boolean) => {
       // Capture challenge nonce before handshake completes
       if (!handshakeComplete && !isBinary) {
         try {
           const msg = JSON.parse(data.toString());
-          if (msg.type === 'event' && msg.event === 'connect.challenge' && msg.payload?.nonce) {
+          if (
+            msg.type === "event" &&
+            msg.event === "connect.challenge" &&
+            msg.payload?.nonce
+          ) {
             challengeNonce = msg.payload.nonce;
             // If we have a deferred connect message waiting, send it now with identity
-            if (savedConnectMsg && !connectSent && gwWs.readyState === WebSocket.OPEN) {
+            if (
+              savedConnectMsg &&
+              !connectSent &&
+              gwWs.readyState === WebSocket.OPEN
+            ) {
               dispatchConnect(challengeNonce);
             }
           }
-        } catch { /* ignore */ }
+        } catch {
+          /* ignore */
+        }
       }
 
       if (clientWs.readyState === WebSocket.OPEN) {
@@ -306,7 +396,7 @@ function createGatewayRelay(
       }
     });
 
-    gwWs.on('open', () => {
+    gwWs.on("open", () => {
       // Handle deferred connect message first. Non-connect pending messages are
       // flushed only after connect is dispatched to preserve protocol ordering.
       if (savedConnectMsg && !connectSent) {
@@ -326,27 +416,34 @@ function createGatewayRelay(
       }
     });
 
-    gwWs.on('error', (err) => {
+    gwWs.on("error", (err) => {
       console.error(`${tag} Gateway error:`, err.message);
       clearChallengeTimer();
       if (!hasRetried || handshakeComplete) clientWs.close();
     });
 
-    gwWs.on('close', (code, reason) => {
-      const reasonStr = reason?.toString() || '';
+    gwWs.on("close", (code, reason) => {
+      const reasonStr = reason?.toString() || "";
       console.log(`${tag} Gateway closed: code=${code}, reason=${reasonStr}`);
       clearChallengeTimer();
 
       // Device auth rejected — retry without device identity
-      const isDeviceRejection = code === 1008 && (
-        reasonStr.includes('device token mismatch') ||
-        reasonStr.includes('device signature invalid') ||
-        reasonStr.includes('unknown device') ||
-        reasonStr.includes('pairing required')
-      );
+      const isDeviceRejection =
+        code === 1008 &&
+        (reasonStr.includes("device token mismatch") ||
+          reasonStr.includes("device signature invalid") ||
+          reasonStr.includes("unknown device") ||
+          reasonStr.includes("pairing required"));
 
-      if (useDeviceIdentity && !hasRetried && isDeviceRejection && clientWs.readyState === WebSocket.OPEN) {
-        console.log(`${tag} Device rejected (${reasonStr}) — retrying without device identity`);
+      if (
+        useDeviceIdentity &&
+        !hasRetried &&
+        isDeviceRejection &&
+        clientWs.readyState === WebSocket.OPEN
+      ) {
+        console.log(
+          `${tag} Device rejected (${reasonStr}) — retrying without device identity`,
+        );
         useDeviceIdentity = false;
         hasRetried = true;
         openGateway();
@@ -358,21 +455,23 @@ function createGatewayRelay(
   }
 
   // Client → Gateway (attached once, references mutable gwWs)
-  clientWs.on('message', (data: Buffer | string, isBinary: boolean) => {
+  clientWs.on("message", (data: Buffer | string, isBinary: boolean) => {
     if (!gwWs || gwWs.readyState !== WebSocket.OPEN) {
       // Gateway not open — intercept connect messages and hold them separately
       if (!isBinary) {
         try {
           const msg = JSON.parse(data.toString());
-          if (msg.type === 'req' && msg.method === 'connect' && msg.params) {
+          if (msg.type === "req" && msg.method === "connect" && msg.params) {
             savedConnectMsg = msg;
             return; // Do NOT add to pending buffer
           }
-        } catch { /* pass through */ }
+        } catch {
+          /* pass through */
+        }
       }
 
       if (!enqueuePending(data, isBinary)) {
-        clientWs.close(1008, 'Too many pending messages');
+        clientWs.close(1008, "Too many pending messages");
         return;
       }
       return;
@@ -384,7 +483,7 @@ function createGatewayRelay(
       if (!isBinary) {
         try {
           const msg = JSON.parse(data.toString());
-          if (msg.type === 'req' && msg.method === 'connect' && msg.params) {
+          if (msg.type === "req" && msg.method === "connect" && msg.params) {
             // Last-write-wins if multiple connect frames arrive before dispatch.
             savedConnectMsg = msg;
             if (challengeNonce) {
@@ -394,11 +493,13 @@ function createGatewayRelay(
             }
             return;
           }
-        } catch { /* pass through to pending queue */ }
+        } catch {
+          /* pass through to pending queue */
+        }
       }
 
       if (!enqueuePending(data, isBinary)) {
-        clientWs.close(1008, 'Too many pending messages');
+        clientWs.close(1008, "Too many pending messages");
       }
       return;
     }
@@ -409,7 +510,12 @@ function createGatewayRelay(
         const msg = JSON.parse(data.toString());
 
         // Intercept connect request — defer until challenge nonce arrives
-        if (!handshakeComplete && msg.type === 'req' && msg.method === 'connect' && msg.params) {
+        if (
+          !handshakeComplete &&
+          msg.type === "req" &&
+          msg.method === "connect" &&
+          msg.params
+        ) {
           savedConnectMsg = msg;
           if (challengeNonce) {
             dispatchConnect(challengeNonce);
@@ -420,42 +526,57 @@ function createGatewayRelay(
         }
 
         // Intercept restricted RPC methods — proxy via CLI (full scopes)
-        if (msg.type === 'req' && RESTRICTED_METHODS.has(msg.method)) {
+        if (msg.type === "req" && RESTRICTED_METHODS.has(msg.method)) {
           const reqId = msg.id;
           gatewayCall(msg.method, msg.params || {})
             .then((result) => {
               if (clientWs.readyState === WebSocket.OPEN) {
-                clientWs.send(JSON.stringify({ type: 'res', id: reqId, ok: true, payload: result }));
+                clientWs.send(
+                  JSON.stringify({
+                    type: "res",
+                    id: reqId,
+                    ok: true,
+                    payload: result,
+                  }),
+                );
               }
             })
             .catch((err) => {
               if (clientWs.readyState === WebSocket.OPEN) {
-                clientWs.send(JSON.stringify({
-                  type: 'res',
-                  id: reqId,
-                  ok: false,
-                  error: { code: -32000, message: (err as Error).message },
-                }));
+                clientWs.send(
+                  JSON.stringify({
+                    type: "res",
+                    id: reqId,
+                    ok: false,
+                    error: { code: -32000, message: (err as Error).message },
+                  }),
+                );
               }
             });
           return;
         }
-      } catch { /* pass through */ }
+      } catch {
+        /* pass through */
+      }
     }
 
     clientToGatewayCount++;
     gwWs.send(isBinary ? data : data.toString());
   });
 
-  clientWs.on('close', (code, reason) => {
+  clientWs.on("close", (code, reason) => {
     clearInterval(pingTimer);
     clearChallengeTimer();
     const duration = Date.now() - connStartTime;
-    console.log(`${tag} Client closed: code=${code}, reason=${reason?.toString()}`);
-    console.log(`${tag} Summary: duration=${duration}ms, client->gw=${clientToGatewayCount}, gw->client=${gatewayToClientCount}`);
+    console.log(
+      `${tag} Client closed: code=${code}, reason=${reason?.toString()}`,
+    );
+    console.log(
+      `${tag} Summary: duration=${duration}ms, client->gw=${clientToGatewayCount}, gw->client=${gatewayToClientCount}`,
+    );
     if (gwWs) gwWs.close();
   });
-  clientWs.on('error', (err) => {
+  clientWs.on("error", (err) => {
     clearInterval(pingTimer);
     clearChallengeTimer();
     console.error(`${tag} Client error:`, err.message);
@@ -469,23 +590,36 @@ function createGatewayRelay(
  * Inject Nerve's device identity into a connect request.
  */
 interface ConnectParams {
-  client?: { id?: string; mode?: string; instanceId?: string; [key: string]: unknown };
+  client?: {
+    id?: string;
+    mode?: string;
+    instanceId?: string;
+    [key: string]: unknown;
+  };
   role?: string;
   scopes?: string[];
   auth?: { token?: string };
 }
 
-function injectDeviceIdentity(msg: Record<string, unknown>, nonce: string, logTag = '[ws-proxy]'): Record<string, unknown> {
+function injectDeviceIdentity(
+  msg: Record<string, unknown>,
+  nonce: string,
+  logTag = "[ws-proxy]",
+): Record<string, unknown> {
   const params = (msg.params || {}) as ConnectParams;
-  const clientId = params.client?.id || 'nerve-ui';
-  const clientMode = params.client?.mode || 'webchat';
-  const role = params.role || 'operator';
-  const scopes = params.scopes || ['operator.admin', 'operator.read', 'operator.write'];
-  const token = params.auth?.token || '';
+  const clientId = params.client?.id || "nerve-ui";
+  const clientMode = params.client?.mode || "webchat";
+  const role = params.role || "operator";
+  const scopes = params.scopes || [
+    "operator.admin",
+    "operator.read",
+    "operator.write",
+  ];
+  const token = params.auth?.token || "";
 
   const scopeSet = new Set(scopes);
-  scopeSet.add('operator.read');
-  scopeSet.add('operator.write');
+  scopeSet.add("operator.read");
+  scopeSet.add("operator.write");
   const finalScopes = [...scopeSet] as string[];
 
   const device = createDeviceBlock({
@@ -497,7 +631,9 @@ function injectDeviceIdentity(msg: Record<string, unknown>, nonce: string, logTa
     nonce,
   });
 
-  console.log(`${logTag} Injected device identity: ${device.id.substring(0, 12)}...`);
+  console.log(
+    `${logTag} Injected device identity: ${device.id.substring(0, 12)}...`,
+  );
 
   return {
     ...msg,

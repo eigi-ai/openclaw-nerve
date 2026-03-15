@@ -10,28 +10,44 @@
  * GET    /api/crons/:id/runs   — Get run history
  */
 
-import { Hono } from 'hono';
-import { z } from 'zod';
-import { invokeGatewayTool } from '../lib/gateway-client.js';
-import { rateLimitGeneral } from '../middleware/rate-limit.js';
+import { Hono, type Context } from "hono";
+import { z } from "zod";
+import { invokeGatewayTool } from "../lib/gateway-client.js";
+import { rateLimitGeneral } from "../middleware/rate-limit.js";
 
 const scheduleSchema = z.union([
-  z.object({ kind: z.literal('at'), at: z.string() }),
-  z.object({ kind: z.literal('every'), everyMs: z.number(), anchorMs: z.number().optional() }),
-  z.object({ kind: z.literal('cron'), expr: z.string(), tz: z.string().optional() }),
+  z.object({ kind: z.literal("at"), at: z.string() }),
+  z.object({
+    kind: z.literal("every"),
+    everyMs: z.number(),
+    anchorMs: z.number().optional(),
+  }),
+  z.object({
+    kind: z.literal("cron"),
+    expr: z.string(),
+    tz: z.string().optional(),
+  }),
 ]);
 
 const payloadSchema = z.union([
-  z.object({ kind: z.literal('systemEvent'), text: z.string() }),
-  z.object({ kind: z.literal('agentTurn'), message: z.string(), model: z.string().optional(), thinking: z.string().optional(), timeoutSeconds: z.number().optional() }),
+  z.object({ kind: z.literal("systemEvent"), text: z.string() }),
+  z.object({
+    kind: z.literal("agentTurn"),
+    message: z.string(),
+    model: z.string().optional(),
+    thinking: z.string().optional(),
+    timeoutSeconds: z.number().optional(),
+  }),
 ]);
 
-const deliverySchema = z.object({
-  mode: z.enum(['none', 'announce']).optional(),
-  channel: z.string().optional(),
-  to: z.string().optional(),
-  bestEffort: z.boolean().optional(),
-}).optional();
+const deliverySchema = z
+  .object({
+    mode: z.enum(["none", "announce"]).optional(),
+    channel: z.string().optional(),
+    to: z.string().optional(),
+    bestEffort: z.boolean().optional(),
+  })
+  .optional();
 
 const cronJobSchema = z.object({
   job: z.object({
@@ -39,7 +55,7 @@ const cronJobSchema = z.object({
     schedule: scheduleSchema.optional(),
     payload: payloadSchema.optional(),
     delivery: deliverySchema,
-    sessionTarget: z.enum(['main', 'isolated']).optional(),
+    sessionTarget: z.enum(["main", "isolated"]).optional(),
     enabled: z.boolean().optional(),
     notify: z.boolean().optional(),
     // Legacy compat — Nerve may send these flat fields
@@ -56,7 +72,7 @@ const cronPatchSchema = z.object({
     schedule: scheduleSchema.optional(),
     payload: payloadSchema.optional(),
     delivery: deliverySchema,
-    sessionTarget: z.enum(['main', 'isolated']).optional(),
+    sessionTarget: z.enum(["main", "isolated"]).optional(),
     enabled: z.boolean().optional(),
     notify: z.boolean().optional(),
     prompt: z.string().max(10000).optional(),
@@ -70,113 +86,258 @@ const app = new Hono();
 
 const GATEWAY_RUN_TIMEOUT_MS = 60_000;
 
-app.get('/api/crons', rateLimitGeneral, async (c) => {
+interface ProxyTargetConfig {
+  apiUrl: string;
+  apiKey: string;
+}
+
+function normalizeApiUrl(raw: string): string | null {
+  const value = raw.trim();
+  if (!value) return null;
   try {
-    const result = await invokeGatewayTool('cron', {
-      action: 'list',
+    const url = new URL(value);
+    if (url.protocol !== "http:" && url.protocol !== "https:") return null;
+    return value.replace(/\/+$/, "");
+  } catch {
+    return null;
+  }
+}
+
+function resolveProxyTarget(c: Context): ProxyTargetConfig | null {
+  const headerApiKey = c.req.header("X-Proxy-Api-Key");
+  const headerApiUrl = c.req.header("X-Proxy-Api-Url");
+  if (headerApiKey && headerApiUrl) {
+    const apiUrl = normalizeApiUrl(headerApiUrl);
+    if (!apiUrl) return null;
+    return { apiUrl, apiKey: headerApiKey.trim() };
+  }
+
+  const referer = c.req.header("Referer");
+  if (!referer) return null;
+  try {
+    const url = new URL(referer);
+    const apiKey = url.searchParams.get("apiKey")?.trim();
+    const apiUrlRaw = url.searchParams.get("apiUrl")?.trim();
+    if (!apiKey || !apiUrlRaw) return null;
+    const apiUrl = normalizeApiUrl(apiUrlRaw);
+    if (!apiUrl) return null;
+    return { apiUrl, apiKey };
+  } catch {
+    return null;
+  }
+}
+
+async function forwardToCockpitProxy(
+  c: Context,
+  proxyPath: string,
+  method: "GET" | "POST" | "PATCH" | "DELETE",
+  body?: unknown,
+): Promise<Response | null> {
+  const target = resolveProxyTarget(c);
+  if (!target) return null;
+
+  const sourceUrl = new URL(c.req.url);
+  const forwardUrl = new URL(
+    `${target.apiUrl}/v1/eigi/cockpit-proxy/${proxyPath}`,
+  );
+  sourceUrl.searchParams.forEach((value, key) => {
+    forwardUrl.searchParams.set(key, value);
+  });
+
+  const headers: Record<string, string> = {
+    "X-API-Key": target.apiKey,
+    Accept: "application/json",
+  };
+  if (body !== undefined) {
+    headers["Content-Type"] = "application/json";
+  }
+
+  const upstream = await fetch(forwardUrl.toString(), {
+    method,
+    headers,
+    body: body !== undefined ? JSON.stringify(body) : undefined,
+  });
+
+  const text = await upstream.text();
+  const contentType =
+    upstream.headers.get("content-type") || "application/json";
+  return new Response(text, {
+    status: upstream.status,
+    headers: { "Content-Type": contentType },
+  });
+}
+
+app.get("/api/crons", rateLimitGeneral, async (c) => {
+  const proxied = await forwardToCockpitProxy(c, "crons", "GET");
+  if (proxied) return proxied;
+
+  try {
+    const result = await invokeGatewayTool("cron", {
+      action: "list",
       includeDisabled: true,
     });
     return c.json({ ok: true, result });
   } catch (err) {
-    console.error('[crons] list error:', (err as Error).message);
+    console.error("[crons] list error:", (err as Error).message);
     return c.json({ ok: false, error: (err as Error).message }, 502);
   }
 });
 
-app.post('/api/crons', rateLimitGeneral, async (c) => {
+app.post("/api/crons", rateLimitGeneral, async (c) => {
   try {
     const raw = await c.req.json();
     const parsed = cronJobSchema.safeParse(raw);
-    if (!parsed.success) return c.json({ ok: false, error: parsed.error.issues[0]?.message || 'Invalid body' }, 400);
+    if (!parsed.success)
+      return c.json(
+        { ok: false, error: parsed.error.issues[0]?.message || "Invalid body" },
+        400,
+      );
     const body = parsed.data;
-    console.log('[crons] add raw input:', JSON.stringify(raw, null, 2));
-    console.log('[crons] add parsed job:', JSON.stringify(body.job, null, 2));
-    const result = await invokeGatewayTool('cron', {
-      action: 'add',
+
+    const proxied = await forwardToCockpitProxy(c, "crons", "POST", {
+      job: body.job,
+    });
+    if (proxied) return proxied;
+
+    console.log("[crons] add raw input:", JSON.stringify(raw, null, 2));
+    console.log("[crons] add parsed job:", JSON.stringify(body.job, null, 2));
+    const result = await invokeGatewayTool("cron", {
+      action: "add",
       job: body.job,
     });
     return c.json({ ok: true, result });
   } catch (err) {
-    console.error('[crons] add error:', (err as Error).message);
+    console.error("[crons] add error:", (err as Error).message);
     return c.json({ ok: false, error: (err as Error).message }, 502);
   }
 });
 
-app.patch('/api/crons/:id', rateLimitGeneral, async (c) => {
-  const id = c.req.param('id');
+app.patch("/api/crons/:id", rateLimitGeneral, async (c) => {
+  const id = c.req.param("id");
   try {
     const raw = await c.req.json();
     const parsed = cronPatchSchema.safeParse(raw);
-    if (!parsed.success) return c.json({ ok: false, error: parsed.error.issues[0]?.message || 'Invalid body' }, 400);
+    if (!parsed.success)
+      return c.json(
+        { ok: false, error: parsed.error.issues[0]?.message || "Invalid body" },
+        400,
+      );
     const body = parsed.data;
-    const result = await invokeGatewayTool('cron', {
-      action: 'update',
+
+    const proxied = await forwardToCockpitProxy(
+      c,
+      `crons/${encodeURIComponent(id)}`,
+      "PATCH",
+      { patch: body.patch },
+    );
+    if (proxied) return proxied;
+
+    const result = await invokeGatewayTool("cron", {
+      action: "update",
       jobId: id,
       patch: body.patch,
     });
     return c.json({ ok: true, result });
   } catch (err) {
-    console.error('[crons] update error:', (err as Error).message);
+    console.error("[crons] update error:", (err as Error).message);
     return c.json({ ok: false, error: (err as Error).message }, 502);
   }
 });
 
-app.delete('/api/crons/:id', rateLimitGeneral, async (c) => {
-  const id = c.req.param('id');
+app.delete("/api/crons/:id", rateLimitGeneral, async (c) => {
+  const id = c.req.param("id");
+  const proxied = await forwardToCockpitProxy(
+    c,
+    `crons/${encodeURIComponent(id)}`,
+    "DELETE",
+  );
+  if (proxied) return proxied;
+
   try {
-    const result = await invokeGatewayTool('cron', {
-      action: 'remove',
+    const result = await invokeGatewayTool("cron", {
+      action: "remove",
       jobId: id,
     });
     return c.json({ ok: true, result });
   } catch (err) {
-    console.error('[crons] remove error:', (err as Error).message);
+    console.error("[crons] remove error:", (err as Error).message);
     return c.json({ ok: false, error: (err as Error).message }, 502);
   }
 });
 
-app.post('/api/crons/:id/toggle', rateLimitGeneral, async (c) => {
-  const id = c.req.param('id');
+app.post("/api/crons/:id/toggle", rateLimitGeneral, async (c) => {
+  const id = c.req.param("id");
   // Get current state first, then flip
   try {
-    const body = await c.req.json<{ enabled: boolean }>().catch(() => ({ enabled: true }));
-    const result = await invokeGatewayTool('cron', {
-      action: 'update',
+    const body = await c.req
+      .json<{ enabled: boolean }>()
+      .catch(() => ({ enabled: true }));
+
+    const proxied = await forwardToCockpitProxy(
+      c,
+      `crons/${encodeURIComponent(id)}/toggle`,
+      "POST",
+      {
+        patch: { enabled: body.enabled },
+      },
+    );
+    if (proxied) return proxied;
+
+    const result = await invokeGatewayTool("cron", {
+      action: "update",
       jobId: id,
       patch: { enabled: body.enabled },
     });
     return c.json({ ok: true, result });
   } catch (err) {
-    console.error('[crons] toggle error:', (err as Error).message);
+    console.error("[crons] toggle error:", (err as Error).message);
     return c.json({ ok: false, error: (err as Error).message }, 502);
   }
 });
 
-app.post('/api/crons/:id/run', rateLimitGeneral, async (c) => {
-  const id = c.req.param('id');
+app.post("/api/crons/:id/run", rateLimitGeneral, async (c) => {
+  const id = c.req.param("id");
+  const proxied = await forwardToCockpitProxy(
+    c,
+    `crons/${encodeURIComponent(id)}/run`,
+    "POST",
+  );
+  if (proxied) return proxied;
+
   try {
-    const result = await invokeGatewayTool('cron', {
-      action: 'run',
-      jobId: id,
-    }, GATEWAY_RUN_TIMEOUT_MS);
+    const result = await invokeGatewayTool(
+      "cron",
+      {
+        action: "run",
+        jobId: id,
+      },
+      GATEWAY_RUN_TIMEOUT_MS,
+    );
     return c.json({ ok: true, result });
   } catch (err) {
-    console.error('[crons] run error:', (err as Error).message);
+    console.error("[crons] run error:", (err as Error).message);
     return c.json({ ok: false, error: (err as Error).message }, 502);
   }
 });
 
-app.get('/api/crons/:id/runs', rateLimitGeneral, async (c) => {
-  const id = c.req.param('id');
+app.get("/api/crons/:id/runs", rateLimitGeneral, async (c) => {
+  const id = c.req.param("id");
+  const proxied = await forwardToCockpitProxy(
+    c,
+    `crons/${encodeURIComponent(id)}/runs`,
+    "GET",
+  );
+  if (proxied) return proxied;
+
   try {
-    const result = await invokeGatewayTool('cron', {
-      action: 'runs',
+    const result = await invokeGatewayTool("cron", {
+      action: "runs",
       jobId: id,
       limit: 10,
     });
     return c.json({ ok: true, result });
   } catch (err) {
-    console.error('[crons] runs error:', (err as Error).message);
+    console.error("[crons] runs error:", (err as Error).message);
     return c.json({ ok: false, error: (err as Error).message }, 502);
   }
 });

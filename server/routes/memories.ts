@@ -8,20 +8,101 @@
  * Response: Array of { type: "section"|"item"|"daily", text, date? }
  */
 
-import { Hono } from 'hono';
-import { zValidator } from '@hono/zod-validator';
-import { z } from 'zod';
-import fs from 'node:fs/promises';
-import path from 'node:path';
-import { config } from '../lib/config.js';
-import { invokeGatewayTool } from '../lib/gateway-client.js';
-import { readText } from '../lib/files.js';
-import { rateLimitGeneral } from '../middleware/rate-limit.js';
-import { broadcast } from './events.js';
-import { withMutex } from '../lib/mutex.js';
-import type { MemoryItem } from '../types.js';
+import { Hono, type Context } from "hono";
+import { zValidator } from "@hono/zod-validator";
+import { z } from "zod";
+import fs from "node:fs/promises";
+import path from "node:path";
+import { config } from "../lib/config.js";
+import { invokeGatewayTool } from "../lib/gateway-client.js";
+import { readText } from "../lib/files.js";
+import { rateLimitGeneral } from "../middleware/rate-limit.js";
+import { broadcast } from "./events.js";
+import { withMutex } from "../lib/mutex.js";
+import type { MemoryItem } from "../types.js";
 
 const app = new Hono();
+
+interface ProxyTargetConfig {
+  apiUrl: string;
+  apiKey: string;
+}
+
+function normalizeApiUrl(raw: string): string | null {
+  const value = raw.trim();
+  if (!value) return null;
+  try {
+    const url = new URL(value);
+    if (url.protocol !== "http:" && url.protocol !== "https:") return null;
+    return value.replace(/\/+$/, "");
+  } catch {
+    return null;
+  }
+}
+
+function resolveProxyTarget(c: Context): ProxyTargetConfig | null {
+  const headerApiKey = c.req.header("X-Proxy-Api-Key");
+  const headerApiUrl = c.req.header("X-Proxy-Api-Url");
+  if (headerApiKey && headerApiUrl) {
+    const apiUrl = normalizeApiUrl(headerApiUrl);
+    if (!apiUrl) return null;
+    return { apiUrl, apiKey: headerApiKey.trim() };
+  }
+
+  const referer = c.req.header("Referer");
+  if (!referer) return null;
+  try {
+    const url = new URL(referer);
+    const apiKey = url.searchParams.get("apiKey")?.trim();
+    const apiUrlRaw = url.searchParams.get("apiUrl")?.trim();
+    if (!apiKey || !apiUrlRaw) return null;
+    const apiUrl = normalizeApiUrl(apiUrlRaw);
+    if (!apiUrl) return null;
+    return { apiUrl, apiKey };
+  } catch {
+    return null;
+  }
+}
+
+async function forwardToCockpitProxy(
+  c: Context,
+  proxyPath: string,
+  method: "GET" | "POST" | "PUT" | "DELETE",
+  body?: unknown,
+): Promise<Response | null> {
+  const target = resolveProxyTarget(c);
+  if (!target) return null;
+
+  const sourceUrl = new URL(c.req.url);
+  const forwardUrl = new URL(
+    `${target.apiUrl}/v1/eigi/cockpit-proxy/${proxyPath}`,
+  );
+  sourceUrl.searchParams.forEach((value, key) => {
+    forwardUrl.searchParams.set(key, value);
+  });
+
+  const headers: Record<string, string> = {
+    "X-API-Key": target.apiKey,
+    Accept: "application/json",
+  };
+  if (body !== undefined) {
+    headers["Content-Type"] = "application/json";
+  }
+
+  const upstream = await fetch(forwardUrl.toString(), {
+    method,
+    headers,
+    body: body !== undefined ? JSON.stringify(body) : undefined,
+  });
+
+  const text = await upstream.text();
+  const contentType =
+    upstream.headers.get("content-type") || "application/json";
+  return new Response(text, {
+    status: upstream.status,
+    headers: { "Content-Type": contentType },
+  });
+}
 
 /* Gateway tool invocation via shared client */
 
@@ -29,11 +110,13 @@ const app = new Hono();
 const createMemorySchema = z.object({
   text: z
     .string()
-    .min(1, 'Text is required')
-    .max(10000, 'Text too long (max 10000 chars)')
-    .refine((s) => s.trim().length > 0, 'Text cannot be empty'),
-  section: z.string().max(200, 'Section name too long').optional(),
-  category: z.enum(['preference', 'fact', 'decision', 'entity', 'other']).optional(),
+    .min(1, "Text is required")
+    .max(10000, "Text too long (max 10000 chars)")
+    .refine((s) => s.trim().length > 0, "Text cannot be empty"),
+  section: z.string().max(200, "Section name too long").optional(),
+  category: z
+    .enum(["preference", "fact", "decision", "entity", "other"])
+    .optional(),
   importance: z.number().min(0).max(1).optional(),
 });
 
@@ -42,8 +125,8 @@ const SAFE_FILENAME = /^[a-zA-Z0-9._-]+$/;
 
 /** Validation schema for deleting a memory */
 const deleteMemorySchema = z.object({
-  query: z.string().min(1, 'Query is required').max(1000, 'Query too long'),
-  type: z.enum(['section', 'item', 'daily']).optional(),
+  query: z.string().min(1, "Query is required").max(1000, "Query too long"),
+  type: z.enum(["section", "item", "daily"]).optional(),
   date: z.string().max(100).optional(),
 });
 
@@ -52,7 +135,11 @@ const deleteMemorySchema = z.object({
  */
 function cleanBlankLines(lines: string[]): string[] {
   return lines.reduce((acc: string[], line) => {
-    if (line.trim() === '' && acc.length > 0 && acc[acc.length - 1].trim() === '') {
+    if (
+      line.trim() === "" &&
+      acc.length > 0 &&
+      acc[acc.length - 1].trim() === ""
+    ) {
       return acc;
     }
     acc.push(line);
@@ -63,7 +150,10 @@ function cleanBlankLines(lines: string[]): string[] {
 /**
  * Delete a section (header + all content until next section) from file content
  */
-function deleteSectionFromLines(lines: string[], sectionTitle: string): string[] | null {
+function deleteSectionFromLines(
+  lines: string[],
+  sectionTitle: string,
+): string[] | null {
   let sectionStart = -1;
   let sectionEnd = lines.length;
 
@@ -71,12 +161,15 @@ function deleteSectionFromLines(lines: string[], sectionTitle: string): string[]
     const trimmed = lines[i].trim();
     if (sectionStart === -1) {
       // Looking for the section to delete
-      if (trimmed.startsWith('## ') && trimmed.slice(3).trim() === sectionTitle) {
+      if (
+        trimmed.startsWith("## ") &&
+        trimmed.slice(3).trim() === sectionTitle
+      ) {
         sectionStart = i;
       }
     } else {
       // Found section, looking for next section header
-      if (trimmed.startsWith('## ')) {
+      if (trimmed.startsWith("## ")) {
         sectionEnd = i;
         break;
       }
@@ -94,17 +187,20 @@ function deleteSectionFromLines(lines: string[], sectionTitle: string): string[]
 /**
  * Delete a single line (bullet point) from file content
  */
-function deleteItemFromLines(lines: string[], itemText: string): string[] | null {
+function deleteItemFromLines(
+  lines: string[],
+  itemText: string,
+): string[] | null {
   const originalLength = lines.length;
-  
+
   const filtered = lines.filter((line) => {
     const trimmed = line.trim();
     // Match bullet points or numbered lists
     if (/^[-*]\s+/.test(trimmed) || /^\d+\.\s/.test(trimmed)) {
       const clean = trimmed
-        .replace(/^[-*]\s+|^\d+\.\s+/, '')
-        .replace(/\*\*/g, '')
-        .replace(/`/g, '');
+        .replace(/^[-*]\s+|^\d+\.\s+/, "")
+        .replace(/\*\*/g, "")
+        .replace(/`/g, "");
       if (clean.trim() === itemText) {
         return false;
       }
@@ -121,7 +217,7 @@ function deleteItemFromLines(lines: string[], itemText: string): string[] | null
 
 interface DeleteOptions {
   text: string;
-  type?: 'section' | 'item' | 'daily';
+  type?: "section" | "item" | "daily";
   date?: string; // For daily files: YYYY-MM-DD
 }
 
@@ -131,18 +227,20 @@ interface DeleteOptions {
  * - If type is 'item': delete just that one line from MEMORY.md
  * - If type is 'daily': delete the section from the daily file (memory/YYYY-MM-DD.md)
  */
-async function deleteMemory(opts: DeleteOptions): Promise<{ deleted: boolean; file?: string }> {
+async function deleteMemory(
+  opts: DeleteOptions,
+): Promise<{ deleted: boolean; file?: string }> {
   const { text, type, date } = opts;
 
   // Validate filename to prevent path traversal
-  if (date && (!SAFE_FILENAME.test(date) || date.includes('..'))) {
+  if (date && (!SAFE_FILENAME.test(date) || date.includes(".."))) {
     return { deleted: false };
   }
 
   try {
     // Determine which file to edit
     let filePath: string;
-    if (type === 'daily' && date) {
+    if (type === "daily" && date) {
       filePath = path.join(config.memoryDir, `${date}.md`);
     } else {
       filePath = config.memoryPath;
@@ -153,10 +251,10 @@ async function deleteMemory(opts: DeleteOptions): Promise<{ deleted: boolean; fi
       return { deleted: false };
     }
 
-    const lines = content.split('\n');
+    const lines = content.split("\n");
     let result: string[] | null = null;
 
-    if (type === 'section' || type === 'daily') {
+    if (type === "section" || type === "daily") {
       // Delete entire section (header + content until next section)
       result = deleteSectionFromLines(lines, text);
     } else {
@@ -170,11 +268,11 @@ async function deleteMemory(opts: DeleteOptions): Promise<{ deleted: boolean; fi
 
     // Clean up and save
     const cleaned = cleanBlankLines(result);
-    await fs.writeFile(filePath, cleaned.join('\n'), 'utf-8');
-    
+    await fs.writeFile(filePath, cleaned.join("\n"), "utf-8");
+
     return { deleted: true, file: path.basename(filePath) };
   } catch (err) {
-    console.error('[memories] Failed to delete:', (err as Error).message);
+    console.error("[memories] Failed to delete:", (err as Error).message);
     return { deleted: false };
   }
 }
@@ -185,17 +283,20 @@ async function deleteMemory(opts: DeleteOptions): Promise<{ deleted: boolean; fi
  * Append a bullet point to MEMORY.md under the given section heading.
  * If the section doesn't exist, create it at the end of the file.
  */
-async function appendToMemoryFile(text: string, section: string): Promise<void> {
+async function appendToMemoryFile(
+  text: string,
+  section: string,
+): Promise<void> {
   const filePath = config.memoryPath;
-  let content = '';
+  let content = "";
   try {
-    content = await fs.readFile(filePath, 'utf-8');
+    content = await fs.readFile(filePath, "utf-8");
   } catch {
     // File doesn't exist yet — start fresh
-    content = '# MEMORY.md\n';
+    content = "# MEMORY.md\n";
   }
 
-  const lines = content.split('\n');
+  const lines = content.split("\n");
   const sectionHeader = `## ${section}`;
 
   // Find the section
@@ -210,7 +311,7 @@ async function appendToMemoryFile(text: string, section: string): Promise<void> 
       }
     } else {
       // Found section, look for next section header
-      if (trimmed.startsWith('## ')) {
+      if (trimmed.startsWith("## ")) {
         sectionEnd = i;
         break;
       }
@@ -224,13 +325,13 @@ async function appendToMemoryFile(text: string, section: string): Promise<void> 
     // Ensure trailing newline before new section
     const trimmedEnd = content.trimEnd();
     const newContent = `${trimmedEnd}\n\n${sectionHeader}\n${bulletLine}\n`;
-    await fs.writeFile(filePath, newContent, 'utf-8');
+    await fs.writeFile(filePath, newContent, "utf-8");
   } else {
     // Section exists — find the last non-blank line within the section to append after
     let insertAt = sectionEnd;
     // Walk backwards from sectionEnd to find last content line in section
     for (let i = sectionEnd - 1; i > sectionStart; i--) {
-      if (lines[i].trim() !== '') {
+      if (lines[i].trim() !== "") {
         insertAt = i + 1;
         break;
       }
@@ -239,27 +340,53 @@ async function appendToMemoryFile(text: string, section: string): Promise<void> 
     // Insert the bullet line
     lines.splice(insertAt, 0, bulletLine);
     const cleaned = cleanBlankLines(lines);
-    await fs.writeFile(filePath, cleaned.join('\n'), 'utf-8');
+    await fs.writeFile(filePath, cleaned.join("\n"), "utf-8");
   }
 }
 
-app.get('/api/memories', rateLimitGeneral, async (c) => {
+app.get("/api/memories", rateLimitGeneral, async (c) => {
+  const target = resolveProxyTarget(c);
+  if (target) {
+    const url = new URL(`${target.apiUrl}/v1/eigi/cockpit-proxy/memory`);
+    const upstream = await fetch(url.toString(), {
+      method: "GET",
+      headers: {
+        "X-API-Key": target.apiKey,
+        Accept: "application/json",
+      },
+    });
+
+    if (!upstream.ok) {
+      const text = await upstream.text();
+      return new Response(text, {
+        status: upstream.status,
+        headers: {
+          "Content-Type":
+            upstream.headers.get("content-type") || "application/json",
+        },
+      });
+    }
+
+    const data = (await upstream.json()) as { entries?: MemoryItem[] };
+    return c.json(Array.isArray(data.entries) ? data.entries : []);
+  }
+
   const memories: MemoryItem[] = [];
 
   // Parse MEMORY.md — sections and bullet points
   const content = await readText(config.memoryPath);
   if (content) {
-    for (const line of content.split('\n')) {
+    for (const line of content.split("\n")) {
       const trimmed = line.trim();
-      if (trimmed.startsWith('## ')) {
-        memories.push({ type: 'section', text: trimmed.slice(3).trim() });
+      if (trimmed.startsWith("## ")) {
+        memories.push({ type: "section", text: trimmed.slice(3).trim() });
       } else if (/^[-*]\s+/.test(trimmed) || /^\d+\.\s/.test(trimmed)) {
         const clean = trimmed
-          .replace(/^[-*]\s+|^\d+\.\s+/, '')
-          .replace(/\*\*/g, '')
-          .replace(/`/g, '');
+          .replace(/^[-*]\s+|^\d+\.\s+/, "")
+          .replace(/\*\*/g, "")
+          .replace(/`/g, "");
         if (clean.length > 0) {
-          memories.push({ type: 'item', text: clean });
+          memories.push({ type: "item", text: clean });
         }
       }
     }
@@ -268,19 +395,19 @@ app.get('/api/memories', rateLimitGeneral, async (c) => {
   // Parse recent daily files — section headers only
   try {
     const files = (await fs.readdir(config.memoryDir))
-      .filter((f) => f.endsWith('.md'))
+      .filter((f) => f.endsWith(".md"))
       .sort()
       .reverse()
       .slice(0, 7);
 
     for (const f of files) {
       const dailyContent = await readText(path.join(config.memoryDir, f));
-      for (const line of dailyContent.split('\n')) {
+      for (const line of dailyContent.split("\n")) {
         const trimmed = line.trim();
-        if (trimmed.startsWith('## ')) {
+        if (trimmed.startsWith("## ")) {
           memories.push({
-            type: 'daily',
-            date: f.replace('.md', ''),
+            type: "daily",
+            date: f.replace(".md", ""),
             text: trimmed.slice(3).trim(),
           });
         }
@@ -302,17 +429,20 @@ app.get('/api/memories', rateLimitGeneral, async (c) => {
  *
  * Returns: { ok: true, content: string } or { ok: false, error: string }
  */
-app.get('/api/memories/section', rateLimitGeneral, async (c) => {
-  const title = c.req.query('title');
-  const date = c.req.query('date');
+app.get("/api/memories/section", rateLimitGeneral, async (c) => {
+  const proxied = await forwardToCockpitProxy(c, "memory/section", "GET");
+  if (proxied) return proxied;
+
+  const title = c.req.query("title");
+  const date = c.req.query("date");
 
   if (!title) {
-    return c.json({ ok: false, error: 'Missing title parameter' }, 400);
+    return c.json({ ok: false, error: "Missing title parameter" }, 400);
   }
 
   // Validate filename to prevent path traversal
-  if (date && (!SAFE_FILENAME.test(date) || date.includes('..'))) {
-    return c.json({ ok: false, error: 'Invalid filename' }, 400);
+  if (date && (!SAFE_FILENAME.test(date) || date.includes(".."))) {
+    return c.json({ ok: false, error: "Invalid filename" }, 400);
   }
 
   try {
@@ -325,10 +455,10 @@ app.get('/api/memories/section', rateLimitGeneral, async (c) => {
 
     const content = await readText(filePath);
     if (!content) {
-      return c.json({ ok: false, error: 'File not found' }, 404);
+      return c.json({ ok: false, error: "File not found" }, 404);
     }
 
-    const lines = content.split('\n');
+    const lines = content.split("\n");
     let sectionStart = -1;
     let sectionEnd = lines.length;
 
@@ -336,11 +466,11 @@ app.get('/api/memories/section', rateLimitGeneral, async (c) => {
     for (let i = 0; i < lines.length; i++) {
       const trimmed = lines[i].trim();
       if (sectionStart === -1) {
-        if (trimmed.startsWith('## ') && trimmed.slice(3).trim() === title) {
+        if (trimmed.startsWith("## ") && trimmed.slice(3).trim() === title) {
           sectionStart = i;
         }
       } else {
-        if (trimmed.startsWith('## ')) {
+        if (trimmed.startsWith("## ")) {
           sectionEnd = i;
           break;
         }
@@ -348,17 +478,17 @@ app.get('/api/memories/section', rateLimitGeneral, async (c) => {
     }
 
     if (sectionStart === -1) {
-      return c.json({ ok: false, error: 'Section not found' }, 404);
+      return c.json({ ok: false, error: "Section not found" }, 404);
     }
 
     // Extract section content (excluding the header itself)
     const sectionLines = lines.slice(sectionStart + 1, sectionEnd);
-    const sectionContent = sectionLines.join('\n').trim();
+    const sectionContent = sectionLines.join("\n").trim();
 
     return c.json({ ok: true, content: sectionContent });
   } catch (err) {
-    console.error('[memories] GET section error:', (err as Error).message);
-    return c.json({ ok: false, error: 'Failed to read memory section' }, 500);
+    console.error("[memories] GET section error:", (err as Error).message);
+    return c.json({ ok: false, error: "Failed to read memory section" }, 500);
   }
 });
 
@@ -371,43 +501,54 @@ app.get('/api/memories/section', rateLimitGeneral, async (c) => {
  * and also stores it in the gateway's LanceDB for vector search.
  */
 app.post(
-  '/api/memories',
+  "/api/memories",
   rateLimitGeneral,
-  zValidator('json', createMemorySchema, (result, c) => {
+  zValidator("json", createMemorySchema, (result, c) => {
     if (!result.success) {
-      const msg = result.error.issues[0]?.message || 'Invalid request';
+      const msg = result.error.issues[0]?.message || "Invalid request";
       return c.json({ ok: false, error: msg }, 400);
     }
   }),
   async (c) => {
     try {
-      const body = c.req.valid('json');
+      const body = c.req.valid("json");
       const trimmedText = body.text.trim();
-      const safeSection = (body.section ?? '').replace(/[\r\n]/g, ' ').trim();
-      const section = safeSection || 'General';
+      const safeSection = (body.section ?? "").replace(/[\r\n]/g, " ").trim();
+      const section = safeSection || "General";
+
+      const proxied = await forwardToCockpitProxy(c, "memory", "POST", {
+        text: trimmedText,
+        section,
+      });
+      if (proxied) return proxied;
 
       // 1. Write to MEMORY.md (primary display source)
-      await withMutex('memory-file', () => appendToMemoryFile(trimmedText, section));
+      await withMutex("memory-file", () =>
+        appendToMemoryFile(trimmedText, section),
+      );
 
       // 2. Also store in gateway LanceDB (for vector search) — best effort
       try {
-        await invokeGatewayTool('memory_store', {
+        await invokeGatewayTool("memory_store", {
           text: trimmedText,
-          category: body.category || 'other',
+          category: body.category || "other",
           importance: body.importance ?? 0.7,
         });
       } catch (err) {
         // Gateway store is best-effort; file write is what matters
-        console.warn('[memories] Gateway memory_store failed (non-fatal):', (err as Error).message);
+        console.warn(
+          "[memories] Gateway memory_store failed (non-fatal):",
+          (err as Error).message,
+        );
       }
 
       // Broadcast memory change to all SSE clients
-      broadcast('memory.changed', { source: 'api', action: 'create', section });
+      broadcast("memory.changed", { source: "api", action: "create", section });
 
       return c.json({ ok: true, result: { written: true, section } });
     } catch (err) {
-      console.error('[memories] POST error:', (err as Error).message);
-      return c.json({ ok: false, error: 'Failed to store memory' }, 500);
+      console.error("[memories] POST error:", (err as Error).message);
+      return c.json({ ok: false, error: "Failed to store memory" }, 500);
     }
   },
 );
@@ -418,27 +559,34 @@ app.post(
  * Body: { title: string, content: string, date?: string }
  */
 const updateSectionSchema = z.object({
-  title: z.string().min(1, 'Title is required').max(200, 'Title too long'),
-  content: z.string().max(50000, 'Content too long'),
+  title: z.string().min(1, "Title is required").max(200, "Title too long"),
+  content: z.string().max(50000, "Content too long"),
   date: z.string().max(100).optional(),
 });
 
 app.put(
-  '/api/memories/section',
+  "/api/memories/section",
   rateLimitGeneral,
-  zValidator('json', updateSectionSchema, (result, c) => {
+  zValidator("json", updateSectionSchema, (result, c) => {
     if (!result.success) {
-      const msg = result.error.issues[0]?.message || 'Invalid request';
+      const msg = result.error.issues[0]?.message || "Invalid request";
       return c.json({ ok: false, error: msg }, 400);
     }
   }),
   async (c) => {
     try {
-      const { title, content, date } = c.req.valid('json');
+      const { title, content, date } = c.req.valid("json");
+
+      const proxied = await forwardToCockpitProxy(c, "memory/section", "PUT", {
+        title,
+        content,
+        date,
+      });
+      if (proxied) return proxied;
 
       // Validate filename to prevent path traversal
-      if (date && (!SAFE_FILENAME.test(date) || date.includes('..'))) {
-        return c.json({ ok: false, error: 'Invalid filename' }, 400);
+      if (date && (!SAFE_FILENAME.test(date) || date.includes(".."))) {
+        return c.json({ ok: false, error: "Invalid filename" }, 400);
       }
 
       // Determine which file to edit
@@ -449,13 +597,17 @@ app.put(
         filePath = config.memoryPath;
       }
 
-      const result = await withMutex('memory-file', async () => {
+      const result = await withMutex("memory-file", async () => {
         const fileContent = await readText(filePath);
         if (!fileContent) {
-          return { ok: false as const, error: 'File not found', status: 404 as const };
+          return {
+            ok: false as const,
+            error: "File not found",
+            status: 404 as const,
+          };
         }
 
-        const lines = fileContent.split('\n');
+        const lines = fileContent.split("\n");
         let sectionStart = -1;
         let sectionEnd = lines.length;
 
@@ -463,11 +615,14 @@ app.put(
         for (let i = 0; i < lines.length; i++) {
           const trimmed = lines[i].trim();
           if (sectionStart === -1) {
-            if (trimmed.startsWith('## ') && trimmed.slice(3).trim() === title) {
+            if (
+              trimmed.startsWith("## ") &&
+              trimmed.slice(3).trim() === title
+            ) {
               sectionStart = i;
             }
           } else {
-            if (trimmed.startsWith('## ')) {
+            if (trimmed.startsWith("## ")) {
               sectionEnd = i;
               break;
             }
@@ -475,20 +630,24 @@ app.put(
         }
 
         if (sectionStart === -1) {
-          return { ok: false as const, error: 'Section not found', status: 404 as const };
+          return {
+            ok: false as const,
+            error: "Section not found",
+            status: 404 as const,
+          };
         }
 
         // Replace the section content (keep the header, replace everything until next section)
         const newLines = [
           ...lines.slice(0, sectionStart + 1), // Everything before section + section header
           content, // New content
-          '', // Blank line before next section
+          "", // Blank line before next section
           ...lines.slice(sectionEnd), // Everything from next section onwards
         ];
 
         // Clean up multiple consecutive blank lines
         const cleaned = cleanBlankLines(newLines);
-        await fs.writeFile(filePath, cleaned.join('\n'), 'utf-8');
+        await fs.writeFile(filePath, cleaned.join("\n"), "utf-8");
         return { ok: true as const };
       });
 
@@ -497,24 +656,27 @@ app.put(
       }
 
       // Broadcast memory change to all SSE clients
-      broadcast('memory.changed', { 
-        source: 'api', 
-        action: 'update', 
+      broadcast("memory.changed", {
+        source: "api",
+        action: "update",
         file: path.basename(filePath),
-        section: title 
+        section: title,
       });
 
-      return c.json({ 
-        ok: true, 
-        result: { 
-          updated: true, 
+      return c.json({
+        ok: true,
+        result: {
+          updated: true,
           file: path.basename(filePath),
-          section: title 
-        } 
+          section: title,
+        },
       });
     } catch (err) {
-      console.error('[memories] PUT section error:', (err as Error).message);
-      return c.json({ ok: false, error: 'Failed to update memory section' }, 500);
+      console.error("[memories] PUT section error:", (err as Error).message);
+      return c.json(
+        { ok: false, error: "Failed to update memory section" },
+        500,
+      );
     }
   },
 );
@@ -525,48 +687,115 @@ app.put(
  * Body: { query: string, type?: 'section' | 'item' | 'daily' }
  */
 app.delete(
-  '/api/memories',
+  "/api/memories",
   rateLimitGeneral,
-  zValidator('json', deleteMemorySchema, (result, c) => {
+  zValidator("json", deleteMemorySchema, (result, c) => {
     if (!result.success) {
-      const msg = result.error.issues[0]?.message || 'Invalid request';
+      const msg = result.error.issues[0]?.message || "Invalid request";
       return c.json({ ok: false, error: msg }, 400);
     }
   }),
   async (c) => {
     try {
-      const body = c.req.valid('json');
+      const body = c.req.valid("json");
 
-      const result = await withMutex('memory-file', () => deleteMemory({
-        text: body.query,
-        type: body.type,
-        date: body.date,
-      }));
-      
+      const target = resolveProxyTarget(c);
+      if (target) {
+        let payload: { section: string; item?: string; date?: string };
+
+        if (body.type === "section" || body.type === "daily") {
+          payload = { section: body.query, date: body.date };
+        } else {
+          // Resolve item -> section by scanning ordered memory entries
+          const listUrl = new URL(
+            `${target.apiUrl}/v1/eigi/cockpit-proxy/memory`,
+          );
+          const listRes = await fetch(listUrl.toString(), {
+            method: "GET",
+            headers: {
+              "X-API-Key": target.apiKey,
+              Accept: "application/json",
+            },
+          });
+          if (!listRes.ok) {
+            const text = await listRes.text();
+            return new Response(text, {
+              status: listRes.status,
+              headers: {
+                "Content-Type":
+                  listRes.headers.get("content-type") || "application/json",
+              },
+            });
+          }
+
+          const listData = (await listRes.json()) as {
+            entries?: Array<{ type?: string; text?: string }>;
+          };
+          let currentSection = "General";
+          let sectionForItem: string | null = null;
+          for (const entry of listData.entries || []) {
+            if (
+              entry.type === "section" &&
+              typeof entry.text === "string" &&
+              entry.text.trim()
+            ) {
+              currentSection = entry.text;
+              continue;
+            }
+            if (entry.type === "item" && entry.text === body.query) {
+              sectionForItem = currentSection;
+              break;
+            }
+          }
+
+          if (!sectionForItem) {
+            return c.json({ ok: false, error: "Memory item not found" }, 404);
+          }
+          payload = { section: sectionForItem, item: body.query };
+        }
+
+        const proxied = await forwardToCockpitProxy(
+          c,
+          "memory",
+          "DELETE",
+          payload,
+        );
+        if (proxied) return proxied;
+      }
+
+      const result = await withMutex("memory-file", () =>
+        deleteMemory({
+          text: body.query,
+          type: body.type,
+          date: body.date,
+        }),
+      );
+
       if (result.deleted) {
         // Broadcast memory change to all SSE clients
-        broadcast('memory.changed', { 
-          source: 'api', 
-          action: 'delete', 
-          file: result.file 
+        broadcast("memory.changed", {
+          source: "api",
+          action: "delete",
+          file: result.file,
         });
 
-        return c.json({ 
-          ok: true, 
-          result: { 
-            deleted: 1, 
-            source: 'file', 
+        return c.json({
+          ok: true,
+          result: {
+            deleted: 1,
+            source: "file",
             file: result.file,
-            type: body.type || 'item' 
-          } 
+            type: body.type || "item",
+          },
         });
       } else {
-        const file = body.type === 'daily' ? `memory/${body.date}.md` : 'MEMORY.md';
+        const file =
+          body.type === "daily" ? `memory/${body.date}.md` : "MEMORY.md";
         return c.json({ ok: false, error: `Memory not found in ${file}` }, 404);
       }
     } catch (err) {
-      console.error('[memories] DELETE error:', (err as Error).message);
-      return c.json({ ok: false, error: 'Failed to delete memory' }, 500);
+      console.error("[memories] DELETE error:", (err as Error).message);
+      return c.json({ ok: false, error: "Failed to delete memory" }, 500);
     }
   },
 );

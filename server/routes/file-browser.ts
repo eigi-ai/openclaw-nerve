@@ -11,23 +11,23 @@
  * @module
  */
 
-import { Hono, type Context } from 'hono';
-import fs from 'node:fs/promises';
-import path from 'node:path';
+import { Hono, type Context } from "hono";
+import fs from "node:fs/promises";
+import path from "node:path";
 import {
   getWorkspaceRoot,
   resolveWorkspacePath,
   isExcluded,
   isBinary,
   MAX_FILE_SIZE,
-} from '../lib/file-utils.js';
+} from "../lib/file-utils.js";
 import {
   FileOpError,
   moveEntry,
   renameEntry,
   restoreEntry,
   trashEntry,
-} from '../lib/file-ops.js';
+} from "../lib/file-ops.js";
 
 const app = new Hono();
 
@@ -35,12 +35,17 @@ const app = new Hono();
 
 interface TreeEntry {
   name: string;
-  path: string;         // relative to workspace root
-  type: 'file' | 'directory';
-  size?: number;        // bytes, files only
-  mtime?: number;       // epoch ms
-  binary?: boolean;     // true for binary files
+  path: string; // relative to workspace root
+  type: "file" | "directory";
+  size?: number; // bytes, files only
+  mtime?: number; // epoch ms
+  binary?: boolean; // true for binary files
   children?: TreeEntry[] | null; // null = not loaded, [] = empty dir
+}
+
+interface ProxyTargetConfig {
+  apiUrl: string;
+  apiKey: string;
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────
@@ -62,18 +67,22 @@ async function listDirectory(
   // Sort: directories first, then alphabetical (case-insensitive)
   items.sort((a, b) => {
     if (a.isDirectory() !== b.isDirectory()) return a.isDirectory() ? -1 : 1;
-    return a.name.localeCompare(b.name, undefined, { sensitivity: 'base' });
+    return a.name.localeCompare(b.name, undefined, { sensitivity: "base" });
   });
 
   for (const item of items) {
     // Skip excluded names and hidden files (except specific ones)
     if (isExcluded(item.name)) continue;
 
-    const inTrash = basePath === '.trash' || basePath.startsWith('.trash/');
+    const inTrash = basePath === ".trash" || basePath.startsWith(".trash/");
     if (inTrash) {
       // Internal metadata file for restore bookkeeping.
-      if (item.name === '.index.json') continue;
-    } else if (item.name.startsWith('.') && item.name !== '.nerveignore' && item.name !== '.trash') {
+      if (item.name === ".index.json") continue;
+    } else if (
+      item.name.startsWith(".") &&
+      item.name !== ".nerveignore" &&
+      item.name !== ".trash"
+    ) {
       continue;
     }
 
@@ -84,10 +93,11 @@ async function listDirectory(
       entries.push({
         name: item.name,
         path: relativePath,
-        type: 'directory',
-        children: depth > 1
-          ? await listDirectory(fullPath, relativePath, depth - 1)
-          : null,
+        type: "directory",
+        children:
+          depth > 1
+            ? await listDirectory(fullPath, relativePath, depth - 1)
+            : null,
       });
     } else if (item.isFile()) {
       try {
@@ -95,7 +105,7 @@ async function listDirectory(
         entries.push({
           name: item.name,
           path: relativePath,
-          type: 'file',
+          type: "file",
           size: stat.size,
           mtime: Math.floor(stat.mtimeMs),
           binary: isBinary(item.name) || undefined,
@@ -111,25 +121,107 @@ async function listDirectory(
 
 function handleFileOpError(c: Context, err: unknown) {
   if (err instanceof FileOpError) {
-    return c.json({ ok: false, error: err.message, code: err.code }, err.status);
+    return c.json(
+      { ok: false, error: err.message, code: err.code },
+      err.status,
+    );
   }
-  const message = err instanceof Error ? err.message : 'Operation failed';
+  const message = err instanceof Error ? err.message : "Operation failed";
   return c.json({ ok: false, error: message }, 500);
+}
+
+function normalizeApiUrl(raw: string): string | null {
+  const value = raw.trim();
+  if (!value) return null;
+  try {
+    const url = new URL(value);
+    if (url.protocol !== "http:" && url.protocol !== "https:") return null;
+    return value.replace(/\/+$/, "");
+  } catch {
+    return null;
+  }
+}
+
+function resolveProxyTarget(c: Context): ProxyTargetConfig | null {
+  const headerApiKey = c.req.header("X-Proxy-Api-Key");
+  const headerApiUrl = c.req.header("X-Proxy-Api-Url");
+  if (headerApiKey && headerApiUrl) {
+    const apiUrl = normalizeApiUrl(headerApiUrl);
+    if (!apiUrl) return null;
+    return { apiUrl, apiKey: headerApiKey.trim() };
+  }
+
+  const referer = c.req.header("Referer");
+  if (!referer) return null;
+  try {
+    const url = new URL(referer);
+    const apiKey = url.searchParams.get("apiKey")?.trim();
+    const apiUrlRaw = url.searchParams.get("apiUrl")?.trim();
+    if (!apiKey || !apiUrlRaw) return null;
+    const apiUrl = normalizeApiUrl(apiUrlRaw);
+    if (!apiUrl) return null;
+    return { apiUrl, apiKey };
+  } catch {
+    return null;
+  }
+}
+
+async function forwardToCockpitProxy(
+  c: Context,
+  proxyPath: string,
+  method: "GET" | "POST" | "PUT" | "DELETE",
+  body?: unknown,
+): Promise<Response | null> {
+  const target = resolveProxyTarget(c);
+  if (!target) return null;
+
+  const sourceUrl = new URL(c.req.url);
+  const forwardUrl = new URL(
+    `${target.apiUrl}/v1/eigi/cockpit-proxy/${proxyPath}`,
+  );
+  sourceUrl.searchParams.forEach((value, key) => {
+    forwardUrl.searchParams.set(key, value);
+  });
+
+  const headers: Record<string, string> = {
+    "X-API-Key": target.apiKey,
+    Accept: "application/json",
+  };
+  if (body !== undefined) {
+    headers["Content-Type"] = "application/json";
+  }
+
+  const upstream = await fetch(forwardUrl.toString(), {
+    method,
+    headers,
+    body: body !== undefined ? JSON.stringify(body) : undefined,
+  });
+
+  const text = await upstream.text();
+  const contentType =
+    upstream.headers.get("content-type") || "application/json";
+  return new Response(text, {
+    status: upstream.status,
+    headers: { "Content-Type": contentType },
+  });
 }
 
 // ── GET /api/files/tree ──────────────────────────────────────────────
 
-app.get('/api/files/tree', async (c) => {
+app.get("/api/files/tree", async (c) => {
+  const proxied = await forwardToCockpitProxy(c, "files/tree", "GET");
+  if (proxied) return proxied;
+
   const root = getWorkspaceRoot();
-  const subPath = c.req.query('path') || '';
-  const depth = Math.min(Math.max(Number(c.req.query('depth')) || 1, 1), 5);
+  const subPath = c.req.query("path") || "";
+  const depth = Math.min(Math.max(Number(c.req.query("depth")) || 1, 1), 5);
 
   // Resolve the target directory
   let targetDir: string;
   if (subPath) {
     const resolved = await resolveWorkspacePath(subPath);
     if (!resolved) {
-      return c.json({ ok: false, error: 'Invalid path' }, 400);
+      return c.json({ ok: false, error: "Invalid path" }, 400);
     }
     targetDir = resolved;
 
@@ -137,10 +229,10 @@ app.get('/api/files/tree', async (c) => {
     try {
       const stat = await fs.stat(targetDir);
       if (!stat.isDirectory()) {
-        return c.json({ ok: false, error: 'Not a directory' }, 400);
+        return c.json({ ok: false, error: "Not a directory" }, 400);
       }
     } catch {
-      return c.json({ ok: false, error: 'Directory not found' }, 404);
+      return c.json({ ok: false, error: "Directory not found" }, 404);
     }
   } else {
     targetDir = root;
@@ -148,25 +240,28 @@ app.get('/api/files/tree', async (c) => {
 
   const entries = await listDirectory(targetDir, subPath, depth);
 
-  return c.json({ ok: true, root: subPath || '.', entries });
+  return c.json({ ok: true, root: subPath || ".", entries });
 });
 
 // ── GET /api/files/read ──────────────────────────────────────────────
 
-app.get('/api/files/read', async (c) => {
-  const filePath = c.req.query('path');
+app.get("/api/files/read", async (c) => {
+  const proxied = await forwardToCockpitProxy(c, "files/read", "GET");
+  if (proxied) return proxied;
+
+  const filePath = c.req.query("path");
   if (!filePath) {
-    return c.json({ ok: false, error: 'Missing path parameter' }, 400);
+    return c.json({ ok: false, error: "Missing path parameter" }, 400);
   }
 
   const resolved = await resolveWorkspacePath(filePath);
   if (!resolved) {
-    return c.json({ ok: false, error: 'Invalid or excluded path' }, 403);
+    return c.json({ ok: false, error: "Invalid or excluded path" }, 403);
   }
 
   // Check if binary
   if (isBinary(path.basename(resolved))) {
-    return c.json({ ok: false, error: 'Binary file', binary: true }, 415);
+    return c.json({ ok: false, error: "Binary file", binary: true }, 415);
   }
 
   // Stat the file
@@ -174,19 +269,25 @@ app.get('/api/files/read', async (c) => {
   try {
     stat = await fs.stat(resolved);
   } catch {
-    return c.json({ ok: false, error: 'File not found' }, 404);
+    return c.json({ ok: false, error: "File not found" }, 404);
   }
 
   if (!stat.isFile()) {
-    return c.json({ ok: false, error: 'Not a file' }, 400);
+    return c.json({ ok: false, error: "Not a file" }, 400);
   }
 
   if (stat.size > MAX_FILE_SIZE) {
-    return c.json({ ok: false, error: `File too large (${(stat.size / 1024).toFixed(0)}KB, max 1MB)` }, 413);
+    return c.json(
+      {
+        ok: false,
+        error: `File too large (${(stat.size / 1024).toFixed(0)}KB, max 1MB)`,
+      },
+      413,
+    );
   }
 
   try {
-    const content = await fs.readFile(resolved, 'utf-8');
+    const content = await fs.readFile(resolved, "utf-8");
     return c.json({
       ok: true,
       content,
@@ -194,52 +295,63 @@ app.get('/api/files/read', async (c) => {
       mtime: Math.floor(stat.mtimeMs),
     });
   } catch {
-    return c.json({ ok: false, error: 'Failed to read file' }, 500);
+    return c.json({ ok: false, error: "Failed to read file" }, 500);
   }
 });
 
 // ── PUT /api/files/write ─────────────────────────────────────────────
 
-app.put('/api/files/write', async (c) => {
+app.put("/api/files/write", async (c) => {
   let body: { path?: string; content?: string; expectedMtime?: number };
   try {
     body = await c.req.json();
   } catch {
-    return c.json({ ok: false, error: 'Invalid JSON body' }, 400);
+    return c.json({ ok: false, error: "Invalid JSON body" }, 400);
   }
 
   const { path: filePath, content, expectedMtime } = body;
 
-  if (!filePath || typeof filePath !== 'string') {
-    return c.json({ ok: false, error: 'Missing path' }, 400);
+  const proxied = await forwardToCockpitProxy(c, "files/write", "PUT", {
+    content,
+    expected_mtime: expectedMtime,
+  });
+  if (proxied) return proxied;
+
+  if (!filePath || typeof filePath !== "string") {
+    return c.json({ ok: false, error: "Missing path" }, 400);
   }
-  if (typeof content !== 'string') {
-    return c.json({ ok: false, error: 'Missing or invalid content' }, 400);
+  if (typeof content !== "string") {
+    return c.json({ ok: false, error: "Missing or invalid content" }, 400);
   }
   if (content.length > MAX_FILE_SIZE) {
-    return c.json({ ok: false, error: 'Content too large (max 1MB)' }, 413);
+    return c.json({ ok: false, error: "Content too large (max 1MB)" }, 413);
   }
 
-  const resolved = await resolveWorkspacePath(filePath, { allowNonExistent: true });
+  const resolved = await resolveWorkspacePath(filePath, {
+    allowNonExistent: true,
+  });
   if (!resolved) {
-    return c.json({ ok: false, error: 'Invalid or excluded path' }, 403);
+    return c.json({ ok: false, error: "Invalid or excluded path" }, 403);
   }
 
   if (isBinary(path.basename(resolved))) {
-    return c.json({ ok: false, error: 'Cannot write binary files' }, 415);
+    return c.json({ ok: false, error: "Cannot write binary files" }, 415);
   }
 
   // Conflict detection: check mtime if expectedMtime provided
-  if (typeof expectedMtime === 'number') {
+  if (typeof expectedMtime === "number") {
     try {
       const stat = await fs.stat(resolved);
       const currentMtime = Math.floor(stat.mtimeMs);
       if (currentMtime !== expectedMtime) {
-        return c.json({
-          ok: false,
-          error: 'File was modified since you loaded it',
-          currentMtime,
-        }, 409);
+        return c.json(
+          {
+            ok: false,
+            error: "File was modified since you loaded it",
+            currentMtime,
+          },
+          409,
+        );
       }
     } catch {
       // File doesn't exist yet — no conflict possible
@@ -251,36 +363,44 @@ app.put('/api/files/write', async (c) => {
 
   // Write the file
   try {
-    await fs.writeFile(resolved, content, 'utf-8');
+    await fs.writeFile(resolved, content, "utf-8");
     const stat = await fs.stat(resolved);
     return c.json({
       ok: true,
       mtime: Math.floor(stat.mtimeMs),
     });
   } catch {
-    return c.json({ ok: false, error: 'Failed to write file' }, 500);
+    return c.json({ ok: false, error: "Failed to write file" }, 500);
   }
 });
 
 // ── POST /api/files/rename ────────────────────────────────────────────
 
-app.post('/api/files/rename', async (c) => {
+app.post("/api/files/rename", async (c) => {
   let body: { path?: string; newName?: string };
   try {
     body = await c.req.json();
   } catch {
-    return c.json({ ok: false, error: 'Invalid JSON body' }, 400);
+    return c.json({ ok: false, error: "Invalid JSON body" }, 400);
   }
 
-  if (!body.path || typeof body.path !== 'string') {
-    return c.json({ ok: false, error: 'Missing path' }, 400);
+  if (!body.path || typeof body.path !== "string") {
+    return c.json({ ok: false, error: "Missing path" }, 400);
   }
-  if (!body.newName || typeof body.newName !== 'string') {
-    return c.json({ ok: false, error: 'Missing newName' }, 400);
+  if (!body.newName || typeof body.newName !== "string") {
+    return c.json({ ok: false, error: "Missing newName" }, 400);
   }
+
+  const proxied = await forwardToCockpitProxy(c, "files/rename", "POST", {
+    new_name: body.newName,
+  });
+  if (proxied) return proxied;
 
   try {
-    const result = await renameEntry({ path: body.path, newName: body.newName });
+    const result = await renameEntry({
+      path: body.path,
+      newName: body.newName,
+    });
     return c.json({ ok: true, ...result });
   } catch (err) {
     return handleFileOpError(c, err);
@@ -289,20 +409,25 @@ app.post('/api/files/rename', async (c) => {
 
 // ── POST /api/files/move ──────────────────────────────────────────────
 
-app.post('/api/files/move', async (c) => {
+app.post("/api/files/move", async (c) => {
   let body: { sourcePath?: string; targetDirPath?: string };
   try {
     body = await c.req.json();
   } catch {
-    return c.json({ ok: false, error: 'Invalid JSON body' }, 400);
+    return c.json({ ok: false, error: "Invalid JSON body" }, 400);
   }
 
-  if (!body.sourcePath || typeof body.sourcePath !== 'string') {
-    return c.json({ ok: false, error: 'Missing sourcePath' }, 400);
+  if (!body.sourcePath || typeof body.sourcePath !== "string") {
+    return c.json({ ok: false, error: "Missing sourcePath" }, 400);
   }
-  if (typeof body.targetDirPath !== 'string') {
-    return c.json({ ok: false, error: 'Missing targetDirPath' }, 400);
+  if (typeof body.targetDirPath !== "string") {
+    return c.json({ ok: false, error: "Missing targetDirPath" }, 400);
   }
+
+  const proxied = await forwardToCockpitProxy(c, "files/move", "POST", {
+    target_dir: body.targetDirPath,
+  });
+  if (proxied) return proxied;
 
   try {
     const result = await moveEntry({
@@ -317,17 +442,20 @@ app.post('/api/files/move', async (c) => {
 
 // ── POST /api/files/trash ─────────────────────────────────────────────
 
-app.post('/api/files/trash', async (c) => {
+app.post("/api/files/trash", async (c) => {
   let body: { path?: string };
   try {
     body = await c.req.json();
   } catch {
-    return c.json({ ok: false, error: 'Invalid JSON body' }, 400);
+    return c.json({ ok: false, error: "Invalid JSON body" }, 400);
   }
 
-  if (!body.path || typeof body.path !== 'string') {
-    return c.json({ ok: false, error: 'Missing path' }, 400);
+  if (!body.path || typeof body.path !== "string") {
+    return c.json({ ok: false, error: "Missing path" }, 400);
   }
+
+  const proxied = await forwardToCockpitProxy(c, "files/trash", "DELETE");
+  if (proxied) return proxied;
 
   try {
     const result = await trashEntry({ path: body.path });
@@ -339,16 +467,16 @@ app.post('/api/files/trash', async (c) => {
 
 // ── POST /api/files/restore ───────────────────────────────────────────
 
-app.post('/api/files/restore', async (c) => {
+app.post("/api/files/restore", async (c) => {
   let body: { path?: string };
   try {
     body = await c.req.json();
   } catch {
-    return c.json({ ok: false, error: 'Invalid JSON body' }, 400);
+    return c.json({ ok: false, error: "Invalid JSON body" }, 400);
   }
 
-  if (!body.path || typeof body.path !== 'string') {
-    return c.json({ ok: false, error: 'Missing path' }, 400);
+  if (!body.path || typeof body.path !== "string") {
+    return c.json({ ok: false, error: "Missing path" }, 400);
   }
 
   try {
@@ -361,17 +489,26 @@ app.post('/api/files/restore', async (c) => {
 
 // ── GET /api/files/raw ───────────────────────────────────────────────
 
-const IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.avif', '.svg', '.ico']);
+const IMAGE_EXTENSIONS = new Set([
+  ".png",
+  ".jpg",
+  ".jpeg",
+  ".gif",
+  ".webp",
+  ".avif",
+  ".svg",
+  ".ico",
+]);
 
 const MIME_TYPES: Record<string, string> = {
-  '.png': 'image/png',
-  '.jpg': 'image/jpeg',
-  '.jpeg': 'image/jpeg',
-  '.gif': 'image/gif',
-  '.webp': 'image/webp',
-  '.avif': 'image/avif',
-  '.svg': 'image/svg+xml',
-  '.ico': 'image/x-icon',
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".gif": "image/gif",
+  ".webp": "image/webp",
+  ".avif": "image/avif",
+  ".svg": "image/svg+xml",
+  ".ico": "image/x-icon",
 };
 
 /** Check if a file is a supported image. */
@@ -379,43 +516,43 @@ export function isImage(name: string): boolean {
   return IMAGE_EXTENSIONS.has(path.extname(name).toLowerCase());
 }
 
-app.get('/api/files/raw', async (c) => {
-  const filePath = c.req.query('path');
+app.get("/api/files/raw", async (c) => {
+  const filePath = c.req.query("path");
   if (!filePath) {
-    return c.json({ ok: false, error: 'Missing path parameter' }, 400);
+    return c.json({ ok: false, error: "Missing path parameter" }, 400);
   }
 
   const resolved = await resolveWorkspacePath(filePath);
   if (!resolved) {
-    return c.json({ ok: false, error: 'Invalid or excluded path' }, 403);
+    return c.json({ ok: false, error: "Invalid or excluded path" }, 403);
   }
 
   const ext = path.extname(resolved).toLowerCase();
   const mime = MIME_TYPES[ext];
   if (!mime) {
-    return c.json({ ok: false, error: 'Unsupported file type' }, 415);
+    return c.json({ ok: false, error: "Unsupported file type" }, 415);
   }
 
   try {
     const stat = await fs.stat(resolved);
     if (!stat.isFile()) {
-      return c.json({ ok: false, error: 'Not a file' }, 400);
+      return c.json({ ok: false, error: "Not a file" }, 400);
     }
     // Cap at 10MB for images
     if (stat.size > 10_485_760) {
-      return c.json({ ok: false, error: 'File too large (max 10MB)' }, 413);
+      return c.json({ ok: false, error: "File too large (max 10MB)" }, 413);
     }
 
     const buffer = await fs.readFile(resolved);
     return new Response(buffer, {
       headers: {
-        'Content-Type': mime,
-        'Content-Length': String(stat.size),
-        'Cache-Control': 'no-cache',
+        "Content-Type": mime,
+        "Content-Length": String(stat.size),
+        "Cache-Control": "no-cache",
       },
     });
   } catch {
-    return c.json({ ok: false, error: 'Failed to read file' }, 500);
+    return c.json({ ok: false, error: "Failed to read file" }, 500);
   }
 });
 
