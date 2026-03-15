@@ -1,6 +1,6 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { renderHook, act } from '@testing-library/react';
-import { useWebSocket } from './useWebSocket';
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { renderHook, act } from "@testing-library/react";
+import { useWebSocket } from "./useWebSocket";
 
 class MockWebSocket {
   static CONNECTING = 0;
@@ -13,15 +13,15 @@ class MockWebSocket {
   onclose: ((ev: CloseEvent) => void) | null = null;
   onerror: ((ev: Event) => void) | null = null;
   onmessage: ((ev: MessageEvent) => void) | null = null;
-  
+
   sentMessages: string[] = [];
   url: string;
-  
+
   constructor(url: string) {
     this.url = url;
     setTimeout(() => {
       this.readyState = MockWebSocket.OPEN;
-      this.onopen?.(new Event('open'));
+      this.onopen?.(new Event("open"));
     }, 0);
   }
 
@@ -32,20 +32,22 @@ class MockWebSocket {
   close() {
     this.readyState = MockWebSocket.CLOSED;
     setTimeout(() => {
-      this.onclose?.(new CloseEvent('close'));
+      this.onclose?.(new CloseEvent("close"));
     }, 0);
   }
 
   simulateMessage(data: unknown) {
-    this.onmessage?.(new MessageEvent('message', { data: JSON.stringify(data) }));
+    this.onmessage?.(
+      new MessageEvent("message", { data: JSON.stringify(data) }),
+    );
   }
 }
 
 function getConnectRequest(ws: MockWebSocket): Record<string, unknown> | null {
-  const connectReq = ws.sentMessages.find(m => {
+  const connectReq = ws.sentMessages.find((m) => {
     try {
       const parsed = JSON.parse(m) as Record<string, unknown>;
-      return parsed.method === 'connect';
+      return parsed.method === "connect";
     } catch {
       return false;
     }
@@ -55,43 +57,47 @@ function getConnectRequest(ws: MockWebSocket): Record<string, unknown> | null {
   return JSON.parse(connectReq) as Record<string, unknown>;
 }
 
-describe('useWebSocket', () => {
+describe("useWebSocket", () => {
   let originalWebSocket: typeof WebSocket;
 
   beforeEach(() => {
-    originalWebSocket = (globalThis as unknown as { WebSocket: typeof WebSocket }).WebSocket;
-    (globalThis as unknown as { WebSocket: typeof MockWebSocket }).WebSocket = MockWebSocket;
+    originalWebSocket = (
+      globalThis as unknown as { WebSocket: typeof WebSocket }
+    ).WebSocket;
+    (globalThis as unknown as { WebSocket: typeof MockWebSocket }).WebSocket =
+      MockWebSocket;
     window.sessionStorage.clear();
     vi.useFakeTimers();
   });
 
   afterEach(() => {
-    (globalThis as unknown as { WebSocket: typeof WebSocket }).WebSocket = originalWebSocket;
+    (globalThis as unknown as { WebSocket: typeof WebSocket }).WebSocket =
+      originalWebSocket;
     vi.restoreAllMocks();
     vi.useRealTimers();
   });
 
-  describe('Connection States', () => {
-    it('should start in disconnected state', () => {
+  describe("Connection States", () => {
+    it("should start in disconnected state", () => {
       const { result } = renderHook(() => useWebSocket());
-      expect(result.current.connectionState).toBe('disconnected');
+      expect(result.current.connectionState).toBe("disconnected");
     });
 
-    it('should transition to connecting state when connect is called', async () => {
+    it("should transition to connecting state when connect is called", async () => {
       const { result } = renderHook(() => useWebSocket());
-      
+
       act(() => {
-        result.current.connect('ws://localhost:8080', 'test-token');
+        result.current.connect("ws://localhost:8080", "test-token");
       });
 
-      expect(result.current.connectionState).toBe('connecting');
+      expect(result.current.connectionState).toBe("connecting");
     });
 
-    it('should transition to disconnected when disconnect is called', async () => {
+    it("should transition to disconnected when disconnect is called", async () => {
       const { result } = renderHook(() => useWebSocket());
-      
+
       act(() => {
-        result.current.connect('ws://localhost:8080', 'test-token');
+        result.current.connect("ws://localhost:8080", "test-token");
       });
 
       await act(async () => {
@@ -106,25 +112,26 @@ describe('useWebSocket', () => {
         await vi.runAllTimersAsync();
       });
 
-      expect(result.current.connectionState).toBe('disconnected');
+      expect(result.current.connectionState).toBe("disconnected");
     });
   });
 
-  describe('Connect handshake payload', () => {
-    it('should include a stable per-tab client.instanceId in connect params', async () => {
+  describe("Connect handshake payload", () => {
+    it("should include a stable per-tab client.instanceId in connect params", async () => {
       const wsInstances: MockWebSocket[] = [];
       const OriginalMockWS = MockWebSocket;
-      (globalThis as unknown as { WebSocket: typeof MockWebSocket }).WebSocket = class extends OriginalMockWS {
-        constructor(url: string) {
-          super(url);
-          wsInstances.push(this);
-        }
-      };
+      (globalThis as unknown as { WebSocket: typeof MockWebSocket }).WebSocket =
+        class extends OriginalMockWS {
+          constructor(url: string) {
+            super(url);
+            wsInstances.push(this);
+          }
+        };
 
       const { result } = renderHook(() => useWebSocket());
 
       act(() => {
-        result.current.connect('ws://localhost:8080', 'test-token');
+        result.current.connect("ws://localhost:8080", "test-token");
       });
 
       await act(async () => {
@@ -133,31 +140,38 @@ describe('useWebSocket', () => {
 
       const ws = wsInstances[0];
       act(() => {
-        ws.simulateMessage({ type: 'event', event: 'connect.challenge', payload: { nonce: 'n1' } });
+        ws.simulateMessage({
+          type: "event",
+          event: "connect.challenge",
+          payload: { nonce: "n1" },
+        });
       });
 
       const connectReq = getConnectRequest(ws);
       expect(connectReq).toBeTruthy();
 
-      const params = connectReq?.params as { client?: { instanceId?: string } } | undefined;
+      const params = connectReq?.params as
+        | { client?: { instanceId?: string } }
+        | undefined;
       expect(params?.client?.instanceId).toBeTruthy();
-      expect(typeof params?.client?.instanceId).toBe('string');
+      expect(typeof params?.client?.instanceId).toBe("string");
     });
 
-    it('should reuse the same instanceId across reconnects in the same tab', async () => {
+    it("should reuse the same instanceId across reconnects in the same tab", async () => {
       const wsInstances: MockWebSocket[] = [];
       const OriginalMockWS = MockWebSocket;
-      (globalThis as unknown as { WebSocket: typeof MockWebSocket }).WebSocket = class extends OriginalMockWS {
-        constructor(url: string) {
-          super(url);
-          wsInstances.push(this);
-        }
-      };
+      (globalThis as unknown as { WebSocket: typeof MockWebSocket }).WebSocket =
+        class extends OriginalMockWS {
+          constructor(url: string) {
+            super(url);
+            wsInstances.push(this);
+          }
+        };
 
       const { result } = renderHook(() => useWebSocket());
 
       act(() => {
-        result.current.connect('ws://localhost:8080', 'test-token');
+        result.current.connect("ws://localhost:8080", "test-token");
       });
 
       await act(async () => {
@@ -166,21 +180,33 @@ describe('useWebSocket', () => {
 
       const firstWs = wsInstances[0];
       act(() => {
-        firstWs.simulateMessage({ type: 'event', event: 'connect.challenge', payload: { nonce: 'first' } });
+        firstWs.simulateMessage({
+          type: "event",
+          event: "connect.challenge",
+          payload: { nonce: "first" },
+        });
       });
 
       const firstConnectReq = getConnectRequest(firstWs);
       expect(firstConnectReq).toBeTruthy();
 
-      const firstInstanceId = (firstConnectReq?.params as { client?: { instanceId?: string } } | undefined)
-        ?.client?.instanceId;
+      const firstInstanceId = (
+        firstConnectReq?.params as
+          | { client?: { instanceId?: string } }
+          | undefined
+      )?.client?.instanceId;
       expect(firstInstanceId).toBeTruthy();
 
       // complete auth so reconnect is enabled
       const firstReqId = firstConnectReq?.id as string | undefined;
       expect(firstReqId).toBeTruthy();
       act(() => {
-        firstWs.simulateMessage({ type: 'res', id: firstReqId, ok: true, payload: {} });
+        firstWs.simulateMessage({
+          type: "res",
+          id: firstReqId,
+          ok: true,
+          payload: {},
+        });
       });
 
       // unexpected close triggers reconnect
@@ -196,33 +222,43 @@ describe('useWebSocket', () => {
       const secondWs = wsInstances[1];
 
       act(() => {
-        secondWs.simulateMessage({ type: 'event', event: 'connect.challenge', payload: { nonce: 'second' } });
+        secondWs.simulateMessage({
+          type: "event",
+          event: "connect.challenge",
+          payload: { nonce: "second" },
+        });
       });
 
       const secondConnectReq = getConnectRequest(secondWs);
-      const secondInstanceId = (secondConnectReq?.params as { client?: { instanceId?: string } } | undefined)
-        ?.client?.instanceId;
+      const secondInstanceId = (
+        secondConnectReq?.params as
+          | { client?: { instanceId?: string } }
+          | undefined
+      )?.client?.instanceId;
 
       expect(secondInstanceId).toBe(firstInstanceId);
     });
 
-    it('should keep initial connect failures to a single browser websocket attempt', async () => {
+    it("should keep initial connect failures to a single browser websocket attempt", async () => {
       const wsInstances: MockWebSocket[] = [];
       const OriginalMockWS = MockWebSocket;
-      (globalThis as unknown as { WebSocket: typeof MockWebSocket }).WebSocket = class extends OriginalMockWS {
-        constructor(url: string) {
-          super(url);
-          wsInstances.push(this);
-        }
-      };
+      (globalThis as unknown as { WebSocket: typeof MockWebSocket }).WebSocket =
+        class extends OriginalMockWS {
+          constructor(url: string) {
+            super(url);
+            wsInstances.push(this);
+          }
+        };
 
       const { result } = renderHook(() => useWebSocket());
 
       let connectError: Error | null = null;
       act(() => {
-        result.current.connect('ws://localhost:8080', 'test-token').catch((error: unknown) => {
-          connectError = error as Error;
-        });
+        result.current
+          .connect("ws://localhost:8080", "test-token")
+          .catch((error: unknown) => {
+            connectError = error as Error;
+          });
       });
 
       await act(async () => {
@@ -231,7 +267,11 @@ describe('useWebSocket', () => {
 
       const ws = wsInstances[0];
       act(() => {
-        ws.simulateMessage({ type: 'event', event: 'connect.challenge', payload: { nonce: 'n1' } });
+        ws.simulateMessage({
+          type: "event",
+          event: "connect.challenge",
+          payload: { nonce: "n1" },
+        });
       });
 
       const connectReq = getConnectRequest(ws);
@@ -247,42 +287,53 @@ describe('useWebSocket', () => {
 
       expect(wsInstances).toHaveLength(1);
       expect(connectError).not.toBeNull();
-      expect(result.current.connectionState).toBe('disconnected');
+      expect(result.current.connectionState).toBe("disconnected");
     });
   });
 
-  describe('Reconnection Logic', () => {
+  describe("Reconnection Logic", () => {
     /** Simulate the gateway auth handshake so hasConnectedRef becomes true. */
     function simulateAuthHandshake(ws: MockWebSocket) {
       // Gateway sends connect.challenge
-      ws.onmessage?.(new MessageEvent('message', {
-        data: JSON.stringify({ type: 'event', event: 'connect.challenge', data: {} })
-      }));
+      ws.onmessage?.(
+        new MessageEvent("message", {
+          data: JSON.stringify({
+            type: "event",
+            event: "connect.challenge",
+            data: {},
+          }),
+        }),
+      );
       // Find the connect request the hook sent and reply with ok
-      const connectReq = ws.sentMessages.find(m => m.includes('"method":"connect"'));
+      const connectReq = ws.sentMessages.find((m) =>
+        m.includes('"method":"connect"'),
+      );
       if (connectReq) {
         const parsed = JSON.parse(connectReq);
-        ws.onmessage?.(new MessageEvent('message', {
-          data: JSON.stringify({ type: 'res', id: parsed.id, ok: true })
-        }));
+        ws.onmessage?.(
+          new MessageEvent("message", {
+            data: JSON.stringify({ type: "res", id: parsed.id, ok: true }),
+          }),
+        );
       }
     }
 
-    it('should attempt to reconnect after unexpected disconnect', async () => {
+    it("should attempt to reconnect after unexpected disconnect", async () => {
       const wsInstances: MockWebSocket[] = [];
       const OriginalMockWS = MockWebSocket;
-      (globalThis as unknown as { WebSocket: typeof MockWebSocket }).WebSocket = class extends OriginalMockWS {
-        constructor(url: string) {
-          super(url);
-          wsInstances.push(this);
-        }
-      };
+      (globalThis as unknown as { WebSocket: typeof MockWebSocket }).WebSocket =
+        class extends OriginalMockWS {
+          constructor(url: string) {
+            super(url);
+            wsInstances.push(this);
+          }
+        };
 
       const { result } = renderHook(() => useWebSocket());
-      
+
       // Initial connection
       act(() => {
-        result.current.connect('ws://localhost:8080', 'test-token');
+        result.current.connect("ws://localhost:8080", "test-token");
       });
 
       await act(async () => {
@@ -306,24 +357,25 @@ describe('useWebSocket', () => {
         await vi.runAllTimersAsync();
       });
 
-      expect(result.current.connectionState).toBe('reconnecting');
+      expect(result.current.connectionState).toBe("reconnecting");
       expect(result.current.reconnectAttempt).toBeGreaterThan(0);
     });
 
-    it('should stop reconnecting after intentional disconnect', async () => {
+    it("should stop reconnecting after intentional disconnect", async () => {
       const wsInstances: MockWebSocket[] = [];
       const OriginalMockWS = MockWebSocket;
-      (globalThis as unknown as { WebSocket: typeof MockWebSocket }).WebSocket = class extends OriginalMockWS {
-        constructor(url: string) {
-          super(url);
-          wsInstances.push(this);
-        }
-      };
+      (globalThis as unknown as { WebSocket: typeof MockWebSocket }).WebSocket =
+        class extends OriginalMockWS {
+          constructor(url: string) {
+            super(url);
+            wsInstances.push(this);
+          }
+        };
 
       const { result } = renderHook(() => useWebSocket());
-      
+
       act(() => {
-        result.current.connect('ws://localhost:8080', 'test-token');
+        result.current.connect("ws://localhost:8080", "test-token");
       });
 
       await act(async () => {
@@ -347,21 +399,21 @@ describe('useWebSocket', () => {
       });
 
       expect(wsInstances.length).toBe(initialCount);
-      expect(result.current.connectionState).toBe('disconnected');
+      expect(result.current.connectionState).toBe("disconnected");
       expect(result.current.reconnectAttempt).toBe(0);
     });
 
-    it('should manage reconnect counter', async () => {
+    it("should manage reconnect counter", async () => {
       const { result } = renderHook(() => useWebSocket());
-      
+
       expect(result.current.reconnectAttempt).toBe(0);
-      
+
       act(() => {
-        result.current.connect('ws://localhost:8080', 'test-token');
+        result.current.connect("ws://localhost:8080", "test-token");
       });
 
       expect(result.current.reconnectAttempt).toBe(0);
-      
+
       act(() => {
         result.current.disconnect();
       });
@@ -370,22 +422,23 @@ describe('useWebSocket', () => {
     });
   });
 
-  describe('RPC Timeout Handling', () => {
-    it('should timeout RPC calls after 30 seconds', async () => {
+  describe("RPC Timeout Handling", () => {
+    it("should timeout RPC calls after 30 seconds", async () => {
       const wsInstances: MockWebSocket[] = [];
       const OriginalMockWS = MockWebSocket;
-      (globalThis as unknown as { WebSocket: typeof MockWebSocket }).WebSocket = class extends OriginalMockWS {
-        constructor(url: string) {
-          super(url);
-          wsInstances.push(this);
-          this.readyState = MockWebSocket.OPEN;
-        }
-      };
+      (globalThis as unknown as { WebSocket: typeof MockWebSocket }).WebSocket =
+        class extends OriginalMockWS {
+          constructor(url: string) {
+            super(url);
+            wsInstances.push(this);
+            this.readyState = MockWebSocket.OPEN;
+          }
+        };
 
       const { result } = renderHook(() => useWebSocket());
-      
+
       act(() => {
-        result.current.connect('ws://localhost:8080', 'test-token');
+        result.current.connect("ws://localhost:8080", "test-token");
       });
 
       await act(async () => {
@@ -394,9 +447,11 @@ describe('useWebSocket', () => {
 
       let rpcError: Error | null = null;
       act(() => {
-        result.current.rpc('test.method', { foo: 'bar' }).catch((e: unknown) => {
-          rpcError = e as Error;
-        });
+        result.current
+          .rpc("test.method", { foo: "bar" })
+          .catch((e: unknown) => {
+            rpcError = e as Error;
+          });
       });
 
       await act(async () => {
@@ -404,40 +459,41 @@ describe('useWebSocket', () => {
       });
 
       expect(rpcError).not.toBeNull();
-      expect(rpcError?.message).toBe('Timeout');
+      expect(rpcError?.message).toBe("Timeout");
     });
 
-    it('should reject RPC calls when not connected', async () => {
+    it("should reject RPC calls when not connected", async () => {
       const { result } = renderHook(() => useWebSocket());
-      
+
       let rpcError: Error | null = null;
       await act(async () => {
         try {
-          await result.current.rpc('test.method');
+          await result.current.rpc("test.method");
         } catch (e) {
           rpcError = e as Error;
         }
       });
 
       expect(rpcError).not.toBeNull();
-      expect(rpcError?.message).toBe('Not connected');
+      expect(rpcError?.message).toBe("Not connected");
     });
 
-    it('should handle RPC with params', async () => {
+    it("should handle RPC with params", async () => {
       const wsInstances: MockWebSocket[] = [];
       const OriginalMockWS = MockWebSocket;
-      (globalThis as unknown as { WebSocket: typeof MockWebSocket }).WebSocket = class extends OriginalMockWS {
-        constructor(url: string) {
-          super(url);
-          wsInstances.push(this);
-          this.readyState = MockWebSocket.OPEN;
-        }
-      };
+      (globalThis as unknown as { WebSocket: typeof MockWebSocket }).WebSocket =
+        class extends OriginalMockWS {
+          constructor(url: string) {
+            super(url);
+            wsInstances.push(this);
+            this.readyState = MockWebSocket.OPEN;
+          }
+        };
 
       const { result } = renderHook(() => useWebSocket());
-      
+
       act(() => {
-        result.current.connect('ws://localhost:8080', 'test-token');
+        result.current.connect("ws://localhost:8080", "test-token");
       });
 
       await act(async () => {
@@ -445,7 +501,9 @@ describe('useWebSocket', () => {
       });
 
       act(() => {
-        result.current.rpc('test.method', { foo: 'bar', num: 42 }).catch(() => {});
+        result.current
+          .rpc("test.method", { foo: "bar", num: 42 })
+          .catch(() => {});
       });
 
       await act(async () => {
@@ -454,50 +512,50 @@ describe('useWebSocket', () => {
 
       const ws = wsInstances[0];
       expect(ws.sentMessages.length).toBeGreaterThan(0);
-      
-      const rpcMsg = ws.sentMessages.find(msg => {
+
+      const rpcMsg = ws.sentMessages.find((msg) => {
         const parsed = JSON.parse(msg);
-        return parsed.method === 'test.method';
+        return parsed.method === "test.method";
       });
-      
+
       expect(rpcMsg).toBeDefined();
       if (rpcMsg) {
         const parsed = JSON.parse(rpcMsg);
-        expect(parsed.type).toBe('req');
-        expect(parsed.params).toEqual({ foo: 'bar', num: 42 });
+        expect(parsed.type).toBe("req");
+        expect(parsed.params).toEqual({ foo: "bar", num: 42 });
       }
     });
   });
 
-  describe('Security - Connection Validation', () => {
-    it('should support secure WebSocket URLs (wss://)', async () => {
+  describe("Security - Connection Validation", () => {
+    it("should support secure WebSocket URLs (wss://)", async () => {
       const { result } = renderHook(() => useWebSocket());
-      
+
       act(() => {
-        result.current.connect('wss://secure.example.com', 'token');
+        result.current.connect("wss://secure.example.com", "token");
       });
 
-      expect(result.current.connectionState).toBe('connecting');
+      expect(result.current.connectionState).toBe("connecting");
     });
 
-    it('should handle connection errors gracefully', async () => {
+    it("should handle connection errors gracefully", async () => {
       const { result } = renderHook(() => useWebSocket());
-      
+
       expect(() => {
         act(() => {
-          result.current.connect('ws://localhost:8080', 'test-token');
+          result.current.connect("ws://localhost:8080", "test-token");
         });
       }).not.toThrow();
     });
 
-    it('should clear error state on successful disconnect', async () => {
+    it("should clear error state on successful disconnect", async () => {
       const { result } = renderHook(() => useWebSocket());
-      
+
       act(() => {
         result.current.disconnect();
       });
 
-      expect(result.current.connectError).toBe('');
+      expect(result.current.connectError).toBe("");
     });
   });
 });
