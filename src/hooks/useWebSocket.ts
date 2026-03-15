@@ -22,10 +22,21 @@ interface UseWebSocketReturn {
   reconnectAttempt: number;
 }
 
+type GatewayClientProfile = {
+  id: string;
+  mode: string;
+};
+
 const RECONNECT_BASE_DELAY = 1000;
 const RECONNECT_MAX_DELAY = 30000;
 const HANDSHAKE_TIMEOUT_MS = 12000;
+const CONNECT_RESPONSE_TIMEOUT_MS = 5000;
 const INSTANCE_ID_STORAGE_KEY = "oc-webchat-instance-id";
+const WEBCHAT_PROFILE: GatewayClientProfile = {
+  id: "webchat-ui",
+  mode: "webchat",
+};
+const CLI_PROFILE: GatewayClientProfile = { id: "cli", mode: "cli" };
 
 function generateInstanceId(): string {
   return crypto.randomUUID
@@ -81,7 +92,13 @@ export function useWebSocket(): UseWebSocketReturn {
   const intentionalDisconnectRef = useRef(false);
   const hasConnectedRef = useRef(false);
   const doConnectRef = useRef<
-    ((url: string, token: string, isReconnect: boolean) => Promise<void>) | null
+    | ((
+        url: string,
+        token: string,
+        isReconnect: boolean,
+        profile?: GatewayClientProfile,
+      ) => Promise<void>)
+    | null
   >(null);
   const instanceIdRef = useRef(getOrCreateInstanceId());
   const connectionGenRef = useRef(0);
@@ -132,7 +149,12 @@ export function useWebSocket(): UseWebSocketReturn {
   );
 
   const doConnect = useCallback(
-    (url: string, token: string, isReconnect: boolean): Promise<void> => {
+    (
+      url: string,
+      token: string,
+      isReconnect: boolean,
+      profile: GatewayClientProfile = WEBCHAT_PROFILE,
+    ): Promise<void> => {
       return new Promise((resolve, reject) => {
         const rejectConnectIfPending = (message: string) => {
           if (connectRejectRef.current) {
@@ -170,11 +192,19 @@ export function useWebSocket(): UseWebSocketReturn {
 
         let ws: WebSocket;
         let handshakeTimer: ReturnType<typeof setTimeout> | null = null;
+        let connectResponseTimer: ReturnType<typeof setTimeout> | null = null;
 
         const clearHandshakeTimer = () => {
           if (handshakeTimer) {
             clearTimeout(handshakeTimer);
             handshakeTimer = null;
+          }
+        };
+
+        const clearConnectResponseTimer = () => {
+          if (connectResponseTimer) {
+            clearTimeout(connectResponseTimer);
+            connectResponseTimer = null;
           }
         };
 
@@ -225,6 +255,19 @@ export function useWebSocket(): UseWebSocketReturn {
           if (msg.type === "event" && msg.event === "connect.challenge") {
             const id = String(++reqIdRef.current);
             connectReqIdRef.current = id;
+            clearConnectResponseTimer();
+            connectResponseTimer = setTimeout(() => {
+              if (
+                ws.readyState === WebSocket.OPEN &&
+                connectionGenRef.current === gen &&
+                connectReqIdRef.current === id
+              ) {
+                const msg = "Gateway connect timed out (no response)";
+                setConnectError(msg);
+                ws.close();
+                rejectConnectIfPending(msg);
+              }
+            }, CONNECT_RESPONSE_TIMEOUT_MS);
             ws.send(
               JSON.stringify({
                 type: "req",
@@ -234,10 +277,10 @@ export function useWebSocket(): UseWebSocketReturn {
                   minProtocol: 3,
                   maxProtocol: 3,
                   client: {
-                    id: "webchat-ui",
+                    id: profile.id,
                     version: "0.1.0",
                     platform: "web",
-                    mode: "webchat",
+                    mode: profile.mode,
                     instanceId: instanceIdRef.current,
                   },
                   role: "operator",
@@ -261,6 +304,7 @@ export function useWebSocket(): UseWebSocketReturn {
             const response = msg as GatewayResponse;
             if (response.id === connectReqIdRef.current) {
               connectReqIdRef.current = null;
+              clearConnectResponseTimer();
               if (response.ok) {
                 // Success! Reset reconnect counter
                 clearHandshakeTimer();
@@ -306,6 +350,7 @@ export function useWebSocket(): UseWebSocketReturn {
 
         ws.onerror = () => {
           clearHandshakeTimer();
+          clearConnectResponseTimer();
           // Don't set error message during reconnect attempts (too noisy)
           if (!isReconnect) {
             setConnectError("WebSocket error — check URL");
@@ -314,6 +359,7 @@ export function useWebSocket(): UseWebSocketReturn {
 
         ws.onclose = (event) => {
           clearHandshakeTimer();
+          clearConnectResponseTimer();
           rejectPending(new Error("WebSocket disconnected"));
 
           // Stale connection: a newer doConnect has already superseded this one
@@ -376,9 +422,11 @@ export function useWebSocket(): UseWebSocketReturn {
               !intentionalDisconnectRef.current &&
               doConnectRef.current
             ) {
-              doConnectRef.current(creds.url, creds.token, true).catch(() => {
-                // Error handling is done in onclose/onerror
-              });
+              doConnectRef
+                .current(creds.url, creds.token, true, WEBCHAT_PROFILE)
+                .catch(() => {
+                  // Error handling is done in onclose/onerror
+                });
             }
           }, delay);
         };
@@ -427,7 +475,54 @@ export function useWebSocket(): UseWebSocketReturn {
       clearReconnectTimeout();
       reconnectAttemptRef.current = 0;
       setReconnectAttempt(0);
-      return doConnect(url, token, false);
+      return doConnect(url, token, false, WEBCHAT_PROFILE).catch(
+        (error: unknown) => {
+          const message =
+            error instanceof Error ? error.message : String(error || "");
+          const shouldRetrySameProfile =
+            message.includes("Gateway handshake timed out") ||
+            message.includes("Gateway connect timed out") ||
+            message.includes("Gateway closed before connect response");
+
+          const shouldRetryWithCliProfile =
+            message.toLowerCase().includes("pairing required") ||
+            message.includes("Gateway connect timed out") ||
+            message.includes("Gateway closed before connect response");
+
+          if (shouldRetrySameProfile) {
+            return doConnect(url, token, false, WEBCHAT_PROFILE).catch(
+              (retryError: unknown) => {
+                const retryMessage =
+                  retryError instanceof Error
+                    ? retryError.message
+                    : String(retryError || "");
+                const retryNeedsCliFallback =
+                  retryMessage.toLowerCase().includes("pairing required") ||
+                  retryMessage.includes("Gateway connect timed out") ||
+                  retryMessage.includes(
+                    "Gateway closed before connect response",
+                  );
+
+                if (retryNeedsCliFallback) {
+                  return doConnect(url, token, false, CLI_PROFILE);
+                }
+
+                throw retryError;
+              },
+            );
+          }
+
+          if (shouldRetryWithCliProfile) {
+            return doConnect(url, token, false, CLI_PROFILE);
+          }
+
+          if (!shouldRetrySameProfile && !shouldRetryWithCliProfile) {
+            throw error;
+          }
+
+          throw error;
+        },
+      );
     },
     [doConnect, clearReconnectTimeout],
   );

@@ -9,15 +9,23 @@
  * @module
  */
 
-import crypto from 'node:crypto';
-import fs from 'node:fs';
-import path from 'node:path';
+import crypto from "node:crypto";
+import fs from "node:fs";
+import path from "node:path";
 
 interface DeviceIdentity {
   deviceId: string;
-  publicKeyRaw: Buffer;      // 32-byte raw Ed25519 public key
-  publicKeyB64url: string;    // base64url-encoded raw public key
-  privateKeyPem: string;      // PEM-encoded private key for signing
+  publicKeyRaw: Buffer; // 32-byte raw Ed25519 public key
+  publicKeyB64url: string; // base64url-encoded raw public key
+  privateKeyPem: string; // PEM-encoded private key for signing
+}
+
+export interface PublicDeviceIdentity {
+  deviceId: string;
+  publicKey: string;
+  clientId: "webchat-ui";
+  clientMode: "webchat";
+  platform: "web";
 }
 
 let cached: DeviceIdentity | null = null;
@@ -25,10 +33,11 @@ let cached: DeviceIdentity | null = null;
 /** Path to the identity file (next to the running process) */
 function identityPath(): string {
   // Store in the .nerve directory under the user's home, or fallback to cwd
-  const dir = process.env.NERVE_DATA_DIR
-    || path.join(process.env.HOME || process.cwd(), '.nerve');
+  const dir =
+    process.env.NERVE_DATA_DIR ||
+    path.join(process.env.HOME || process.cwd(), ".nerve");
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
-  return path.join(dir, 'device-identity.json');
+  return path.join(dir, "device-identity.json");
 }
 
 /** Load or generate a persistent Ed25519 device identity */
@@ -40,29 +49,37 @@ export function getDeviceIdentity(): DeviceIdentity {
   // Try loading existing identity
   if (fs.existsSync(idPath)) {
     try {
-      const stored = JSON.parse(fs.readFileSync(idPath, 'utf-8'));
+      const stored = JSON.parse(fs.readFileSync(idPath, "utf-8"));
       if (stored.publicKeyB64url && stored.privateKeyPem && stored.deviceId) {
         cached = {
           deviceId: stored.deviceId,
-          publicKeyRaw: Buffer.from(stored.publicKeyB64url, 'base64url'),
+          publicKeyRaw: Buffer.from(stored.publicKeyB64url, "base64url"),
           publicKeyB64url: stored.publicKeyB64url,
           privateKeyPem: stored.privateKeyPem,
         };
-        console.log(`[device-identity] Loaded existing identity: ${cached.deviceId.substring(0, 12)}…`);
+        console.log(
+          `[device-identity] Loaded existing identity: ${cached.deviceId.substring(0, 12)}…`,
+        );
         return cached;
       }
     } catch (err) {
-      console.warn('[device-identity] Failed to load identity, regenerating:', (err as Error).message);
+      console.warn(
+        "[device-identity] Failed to load identity, regenerating:",
+        (err as Error).message,
+      );
     }
   }
 
   // Generate new Ed25519 keypair
-  const { publicKey, privateKey } = crypto.generateKeyPairSync('ed25519');
-  const pubDer = publicKey.export({ type: 'spki', format: 'der' });
+  const { publicKey, privateKey } = crypto.generateKeyPairSync("ed25519");
+  const pubDer = publicKey.export({ type: "spki", format: "der" });
   const rawPub = pubDer.slice(-32); // Ed25519 SPKI has 12-byte header
-  const pubB64url = rawPub.toString('base64url');
-  const deviceId = crypto.createHash('sha256').update(rawPub).digest('hex');
-  const privateKeyPem = privateKey.export({ type: 'pkcs8', format: 'pem' }) as string;
+  const pubB64url = rawPub.toString("base64url");
+  const deviceId = crypto.createHash("sha256").update(rawPub).digest("hex");
+  const privateKeyPem = privateKey.export({
+    type: "pkcs8",
+    format: "pem",
+  }) as string;
 
   cached = {
     deviceId,
@@ -78,10 +95,26 @@ export function getDeviceIdentity(): DeviceIdentity {
     privateKeyPem,
     createdAt: new Date().toISOString(),
   };
-  fs.writeFileSync(idPath, JSON.stringify(stored, null, 2) + '\n', { mode: 0o600 });
-  console.log(`[device-identity] Generated new identity: ${deviceId.substring(0, 12)}… → ${idPath}`);
+  fs.writeFileSync(idPath, JSON.stringify(stored, null, 2) + "\n", {
+    mode: 0o600,
+  });
+  console.log(
+    `[device-identity] Generated new identity: ${deviceId.substring(0, 12)}… → ${idPath}`,
+  );
 
   return cached;
+}
+
+/** Public identity payload safe to share with trusted deploy infrastructure. */
+export function getPublicDeviceIdentity(): PublicDeviceIdentity {
+  const identity = getDeviceIdentity();
+  return {
+    deviceId: identity.deviceId,
+    publicKey: identity.publicKeyB64url,
+    clientId: "webchat-ui",
+    clientMode: "webchat",
+    platform: "web",
+  };
 }
 
 /**
@@ -100,22 +133,24 @@ export function buildSigningPayload(params: {
   nonce: string;
 }): string {
   return [
-    'v2',
+    "v2",
     params.deviceId,
     params.clientId,
     params.clientMode,
     params.role,
-    params.scopes.join(','),
+    params.scopes.join(","),
     String(params.signedAtMs),
     params.token,
     params.nonce,
-  ].join('|');
+  ].join("|");
 }
 
 /** Sign a payload with the device's Ed25519 private key, return base64url */
 export function signPayload(privateKeyPem: string, payload: string): string {
   const key = crypto.createPrivateKey(privateKeyPem);
-  return crypto.sign(null, Buffer.from(payload, 'utf8'), key).toString('base64url');
+  return crypto
+    .sign(null, Buffer.from(payload, "utf8"), key)
+    .toString("base64url");
 }
 
 /**
