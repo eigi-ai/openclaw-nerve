@@ -18,6 +18,10 @@ interface ResizablePanelsProps {
   leftClassName?: string;
   /** Additional class names for the right pane wrapper. */
   rightClassName?: string;
+  /** Optional explicit right panel pixel width (reserved for layout integrations). */
+  rightWidthPx?: number | null;
+  /** Optional callback for explicit right panel width updates (reserved). */
+  onRightWidthChange?: (width: number | null) => void;
 }
 
 /**

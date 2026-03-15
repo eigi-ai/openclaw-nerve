@@ -33,6 +33,8 @@ interface ChatPanelProps {
   loadMore?: () => boolean;
   /** Whether there are older messages to load */
   hasMore?: boolean;
+  /** Optional callback to toggle file browser from chat controls (reserved). */
+  onToggleFileBrowser?: () => void;
 }
 
 export interface ChatPanelHandle {

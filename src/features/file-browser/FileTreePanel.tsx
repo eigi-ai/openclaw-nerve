@@ -54,6 +54,12 @@ interface FileTreePanelProps {
   onCloseOpenPaths?: (pathPrefix: string) => void;
   /** Called externally when a file changes (SSE) — refreshes affected directory */
   lastChangedPath?: string | null;
+  /** Whether panel is rendered in compact/mobile layout. */
+  isCompactLayout?: boolean;
+  /** Optional controlled collapsed state. */
+  collapsed?: boolean;
+  /** Optional controlled collapsed state updater. */
+  onCollapseChange?: (nextCollapsed: boolean) => void;
 }
 
 interface FileOpResult {
@@ -73,6 +79,8 @@ export function FileTreePanel({
   onRemapOpenPaths,
   onCloseOpenPaths,
   lastChangedPath,
+  collapsed: controlledCollapsed,
+  onCollapseChange,
 }: FileTreePanelProps) {
   const {
     entries, loading, error, expandedPaths, selectedPath,
@@ -94,11 +102,18 @@ export function FileTreePanel({
   const draggingRef = useRef(false);
 
   // State-driven rendering (refs hold source of truth, state triggers re-render)
-  const [collapsed, setCollapsed] = useState(loadCollapsed);
+  const [internalCollapsed, setInternalCollapsed] = useState(loadCollapsed);
   const [width, setWidth] = useState(() => {
     const c = loadCollapsed();
     return c ? COLLAPSED_WIDTH : loadWidth();
   });
+
+  const collapsed = controlledCollapsed ?? internalCollapsed;
+
+  const setCollapsed = useCallback((next: boolean) => {
+    setInternalCollapsed(next);
+    onCollapseChange?.(next);
+  }, [onCollapseChange]);
 
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; entry: TreeEntry } | null>(null);
   const contextMenuRef = useRef<HTMLDivElement>(null);
@@ -186,7 +201,7 @@ export function FileTreePanel({
     setCollapsed(collapsedRef.current);
     setWidth(collapsedRef.current ? COLLAPSED_WIDTH : widthRef.current);
     try { localStorage.setItem(COLLAPSED_STORAGE_KEY, String(collapsedRef.current)); } catch { /* ignore */ }
-  }, []);
+  }, [setCollapsed]);
 
   // Resize drag handling
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
