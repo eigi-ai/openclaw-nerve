@@ -36,7 +36,6 @@ const WEBCHAT_PROFILE: GatewayClientProfile = {
   id: "webchat-ui",
   mode: "webchat",
 };
-const CLI_PROFILE: GatewayClientProfile = { id: "cli", mode: "cli" };
 
 function generateInstanceId(): string {
   return crypto.randomUUID
@@ -475,54 +474,7 @@ export function useWebSocket(): UseWebSocketReturn {
       clearReconnectTimeout();
       reconnectAttemptRef.current = 0;
       setReconnectAttempt(0);
-      return doConnect(url, token, false, WEBCHAT_PROFILE).catch(
-        (error: unknown) => {
-          const message =
-            error instanceof Error ? error.message : String(error || "");
-          const shouldRetrySameProfile =
-            message.includes("Gateway handshake timed out") ||
-            message.includes("Gateway connect timed out") ||
-            message.includes("Gateway closed before connect response");
-
-          const shouldRetryWithCliProfile =
-            message.toLowerCase().includes("pairing required") ||
-            message.includes("Gateway connect timed out") ||
-            message.includes("Gateway closed before connect response");
-
-          if (shouldRetrySameProfile) {
-            return doConnect(url, token, false, WEBCHAT_PROFILE).catch(
-              (retryError: unknown) => {
-                const retryMessage =
-                  retryError instanceof Error
-                    ? retryError.message
-                    : String(retryError || "");
-                const retryNeedsCliFallback =
-                  retryMessage.toLowerCase().includes("pairing required") ||
-                  retryMessage.includes("Gateway connect timed out") ||
-                  retryMessage.includes(
-                    "Gateway closed before connect response",
-                  );
-
-                if (retryNeedsCliFallback) {
-                  return doConnect(url, token, false, CLI_PROFILE);
-                }
-
-                throw retryError;
-              },
-            );
-          }
-
-          if (shouldRetryWithCliProfile) {
-            return doConnect(url, token, false, CLI_PROFILE);
-          }
-
-          if (!shouldRetrySameProfile && !shouldRetryWithCliProfile) {
-            throw error;
-          }
-
-          throw error;
-        },
-      );
+      return doConnect(url, token, false, WEBCHAT_PROFILE);
     },
     [doConnect, clearReconnectTimeout],
   );

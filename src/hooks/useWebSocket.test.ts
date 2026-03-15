@@ -205,6 +205,50 @@ describe('useWebSocket', () => {
 
       expect(secondInstanceId).toBe(firstInstanceId);
     });
+
+    it('should keep initial connect failures to a single browser websocket attempt', async () => {
+      const wsInstances: MockWebSocket[] = [];
+      const OriginalMockWS = MockWebSocket;
+      (globalThis as unknown as { WebSocket: typeof MockWebSocket }).WebSocket = class extends OriginalMockWS {
+        constructor(url: string) {
+          super(url);
+          wsInstances.push(this);
+        }
+      };
+
+      const { result } = renderHook(() => useWebSocket());
+
+      let connectError: Error | null = null;
+      act(() => {
+        result.current.connect('ws://localhost:8080', 'test-token').catch((error: unknown) => {
+          connectError = error as Error;
+        });
+      });
+
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+
+      const ws = wsInstances[0];
+      act(() => {
+        ws.simulateMessage({ type: 'event', event: 'connect.challenge', payload: { nonce: 'n1' } });
+      });
+
+      const connectReq = getConnectRequest(ws);
+      expect(connectReq).toBeTruthy();
+
+      act(() => {
+        ws.close();
+      });
+
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+
+      expect(wsInstances).toHaveLength(1);
+      expect(connectError).not.toBeNull();
+      expect(result.current.connectionState).toBe('disconnected');
+    });
   });
 
   describe('Reconnection Logic', () => {
