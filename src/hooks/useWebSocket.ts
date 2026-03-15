@@ -134,9 +134,28 @@ export function useWebSocket(): UseWebSocketReturn {
   const doConnect = useCallback(
     (url: string, token: string, isReconnect: boolean): Promise<void> => {
       return new Promise((resolve, reject) => {
+        const rejectConnectIfPending = (message: string) => {
+          if (connectRejectRef.current) {
+            connectRejectRef.current(new Error(message));
+            connectRejectRef.current = null;
+            connectResolveRef.current = null;
+          }
+        };
+
+        const resolveConnectIfPending = () => {
+          if (connectResolveRef.current) {
+            connectResolveRef.current();
+            connectResolveRef.current = null;
+            connectRejectRef.current = null;
+          }
+        };
+
         const gen = ++connectionGenRef.current;
         if (!isReconnect) {
           setConnectError("");
+          // Fresh user-initiated connect should require a new successful
+          // handshake before auto-reconnect is eligible again.
+          hasConnectedRef.current = false;
         }
         if (wsRef.current) {
           wsRef.current.close();
@@ -190,7 +209,7 @@ export function useWebSocket(): UseWebSocketReturn {
               const msg = "Gateway handshake timed out (no challenge/response)";
               setConnectError(msg);
               ws.close();
-              connectRejectRef.current?.(new Error(msg));
+              rejectConnectIfPending(msg);
             }
           }, HANDSHAKE_TIMEOUT_MS);
         };
@@ -250,7 +269,7 @@ export function useWebSocket(): UseWebSocketReturn {
                 setReconnectAttempt(0);
                 setConnectError("");
                 setConnectionState("connected");
-                connectResolveRef.current?.();
+                resolveConnectIfPending();
               } else {
                 clearHandshakeTimer();
                 const errMsg =
@@ -259,7 +278,7 @@ export function useWebSocket(): UseWebSocketReturn {
                 setConnectionState("disconnected");
                 intentionalDisconnectRef.current = true; // prevent reconnect on auth failure
                 ws.close();
-                connectRejectRef.current?.(new Error(errMsg));
+                rejectConnectIfPending(errMsg);
               }
               return;
             }
@@ -293,12 +312,36 @@ export function useWebSocket(): UseWebSocketReturn {
           }
         };
 
-        ws.onclose = () => {
+        ws.onclose = (event) => {
           clearHandshakeTimer();
           rejectPending(new Error("WebSocket disconnected"));
 
           // Stale connection: a newer doConnect has already superseded this one
           if (gen !== connectionGenRef.current) return;
+
+          // Initial connect never completed and socket closed after a connect
+          // request was sent, but before any connect response arrived.
+          // Reject the pending connect() promise so callers don't stay stuck
+          // in "Connecting...".
+          if (
+            !hasConnectedRef.current &&
+            !intentionalDisconnectRef.current &&
+            connectReqIdRef.current
+          ) {
+            const reason =
+              event.reason && event.reason.trim().length > 0
+                ? event.reason
+                : "Gateway closed before connect response";
+
+            if (!intentionalDisconnectRef.current) {
+              setConnectError((prev) => prev || reason);
+            }
+
+            setConnectionState("disconnected");
+            connectReqIdRef.current = null;
+            rejectConnectIfPending(reason);
+            return;
+          }
 
           // Don't reconnect if intentionally disconnected, no credentials, or never connected
           if (
