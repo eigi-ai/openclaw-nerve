@@ -8,10 +8,10 @@
  * from the server to pre-fill (and auto-connect with) the configured gateway
  * URL and token. This bridges the server-side .env config to the browser.
  */
-import { useState, useCallback, useEffect, useRef } from 'react';
-import { useGateway, loadConfig, saveConfig } from '@/contexts/GatewayContext';
-import { DEFAULT_GATEWAY_WS } from '@/lib/constants';
-import { areGatewayUrlsEquivalent } from '@/lib/gatewayUrls';
+import { useState, useCallback, useEffect, useRef } from "react";
+import { useGateway, loadConfig, saveConfig } from "@/contexts/GatewayContext";
+import { DEFAULT_GATEWAY_WS } from "@/lib/constants";
+import { areGatewayUrlsEquivalent } from "@/lib/gatewayUrls";
 
 export interface ConnectionManagerState {
   dialogOpen: boolean;
@@ -29,16 +29,40 @@ export interface ConnectionManagerState {
 /** Create an AbortSignal that times out after `ms` milliseconds. */
 function timeoutSignal(ms: number): AbortSignal {
   // AbortSignal.timeout() not supported in Safari <16.4
-  if (typeof AbortSignal.timeout === 'function') return AbortSignal.timeout(ms);
+  if (typeof AbortSignal.timeout === "function") return AbortSignal.timeout(ms);
   const controller = new AbortController();
   setTimeout(() => controller.abort(), ms);
   return controller.signal;
 }
 
-/** Fetch gateway connection defaults from the Nerve server. */
-async function fetchConnectDefaults(): Promise<{ wsUrl: string; token: string | null; authEnabled?: boolean; serverSideAuth?: boolean } | null> {
+function readQueryConnectionConfig(): { wsUrl?: string; token?: string } {
+  if (typeof window === "undefined") return {};
+
   try {
-    const resp = await fetch('/api/connect-defaults', { signal: timeoutSignal(3000) });
+    const params = new URLSearchParams(window.location.search);
+    const gateway = params.get("gateway")?.trim();
+    const token = params.get("token")?.trim();
+
+    const out: { wsUrl?: string; token?: string } = {};
+    if (gateway) out.wsUrl = gateway;
+    if (token) out.token = token;
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+/** Fetch gateway connection defaults from the Nerve server. */
+async function fetchConnectDefaults(): Promise<{
+  wsUrl: string;
+  token: string | null;
+  authEnabled?: boolean;
+  serverSideAuth?: boolean;
+} | null> {
+  try {
+    const resp = await fetch("/api/connect-defaults", {
+      signal: timeoutSignal(3000),
+    });
     if (!resp.ok) return null;
     return await resp.json();
   } catch {
@@ -49,12 +73,20 @@ async function fetchConnectDefaults(): Promise<{ wsUrl: string; token: string | 
 export function useConnectionManager(): ConnectionManagerState {
   const { connectionState, connect, disconnect } = useGateway();
 
+  const initialQueryConfig = readQueryConnectionConfig();
+  const initialSavedConfig = loadConfig();
+
   const [dialogOpen, setDialogOpen] = useState(true);
 
   // Editable connection settings (local state for settings drawer)
   // Lazy initializers avoid re-parsing sessionStorage on every render
-  const [editableUrl, setEditableUrl] = useState(() => loadConfig().url || DEFAULT_GATEWAY_WS);
-  const [editableToken, setEditableToken] = useState(() => loadConfig().token || '');
+  const [editableUrl, setEditableUrl] = useState(
+    () =>
+      initialQueryConfig.wsUrl || initialSavedConfig.url || DEFAULT_GATEWAY_WS,
+  );
+  const [editableToken, setEditableToken] = useState(
+    () => initialQueryConfig.token || initialSavedConfig.token || "",
+  );
   const [serverSideAuth, setServerSideAuth] = useState(false);
   const [officialUrl, setOfficialUrl] = useState<string | null>(null);
 
@@ -62,11 +94,14 @@ export function useConnectionManager(): ConnectionManagerState {
   const autoConnectAttempted = useRef(false);
 
   /** Connect to the gateway, save config, and close the dialog. */
-  const handleConnect = useCallback(async (url: string, token: string) => {
-    saveConfig(url, token);
-    await connect(url, token);
-    setDialogOpen(false);
-  }, [connect]);
+  const handleConnect = useCallback(
+    async (url: string, token: string) => {
+      saveConfig(url, token);
+      await connect(url, token);
+      setDialogOpen(false);
+    },
+    [connect],
+  );
 
   // Fetch server defaults (async, can't run in initializer)
   useEffect(() => {
@@ -74,6 +109,20 @@ export function useConnectionManager(): ConnectionManagerState {
     autoConnectAttempted.current = true;
 
     const saved = loadConfig();
+    const queryConfig = readQueryConnectionConfig();
+    const hasQueryGateway = Boolean(queryConfig.wsUrl);
+    const queryUrl = queryConfig.wsUrl?.trim();
+    const queryToken = queryConfig.token?.trim() || "";
+
+    // Hosted deep-link params take precedence on first load.
+    if (queryUrl) {
+      setEditableUrl(queryUrl);
+      setEditableToken(queryToken);
+      saveConfig(queryUrl, queryToken);
+      handleConnect(queryUrl, queryToken).catch(() => {
+        // Connection failed - user can manually reconnect from dialog
+      });
+    }
 
     // Always fetch defaults once on mount to establish serverSideAuth and officialUrl
     fetchConnectDefaults().then((defaults) => {
@@ -82,34 +131,43 @@ export function useConnectionManager(): ConnectionManagerState {
 
       const savedUrl = saved.url?.trim();
       const officialWsUrl = defaults?.wsUrl?.trim();
-      const savedMatchesOfficial = areGatewayUrlsEquivalent(savedUrl, officialWsUrl);
+      const savedMatchesOfficial = areGatewayUrlsEquivalent(
+        savedUrl,
+        officialWsUrl,
+      );
 
       if (officialWsUrl) {
         setOfficialUrl(officialWsUrl);
         // Canonicalize the managed URL path so stale localhost aliases
         // do not keep the app in manual-connect mode.
-        if (!savedUrl || savedMatchesOfficial) {
+        if (!hasQueryGateway && (!savedUrl || savedMatchesOfficial)) {
           setEditableUrl(officialWsUrl);
         }
       }
 
       // Only override editableToken if it's currently empty
-      if (!saved.token && defaults?.token) {
+      if (!hasQueryGateway && !saved.token && defaults?.token) {
         setEditableToken(defaults.token);
       }
 
-      if (isServerSideAuth && officialWsUrl && (!savedUrl || savedMatchesOfficial)) {
-        setEditableToken('');
+      if (
+        !hasQueryGateway &&
+        isServerSideAuth &&
+        officialWsUrl &&
+        (!savedUrl || savedMatchesOfficial)
+      ) {
+        setEditableToken("");
       }
 
       // Auto-connect if server-side auth is supported and the saved gateway is
       // either empty or the same official gateway under a loopback alias.
       if (
+        !hasQueryGateway &&
         isServerSideAuth &&
         officialWsUrl &&
         (!savedUrl || savedMatchesOfficial)
       ) {
-        handleConnect(officialWsUrl, '').catch(() => {
+        handleConnect(officialWsUrl, "").catch(() => {
           // Auto-connect failed - user can manually connect via dialog
         });
       }
@@ -118,18 +176,22 @@ export function useConnectionManager(): ConnectionManagerState {
 
   const handleReconnect = useCallback(async () => {
     // Don't reconnect if already connecting
-    if (connectionState === 'connecting' || connectionState === 'reconnecting') {
+    if (
+      connectionState === "connecting" ||
+      connectionState === "reconnecting"
+    ) {
       return;
     }
 
     const isOfficialUrl = areGatewayUrlsEquivalent(editableUrl, officialUrl);
     if (editableUrl && (editableToken || (serverSideAuth && isOfficialUrl))) {
       // Force empty token if server side auth is active for this URL
-      const token = serverSideAuth && isOfficialUrl ? '' : editableToken;
+      const token = serverSideAuth && isOfficialUrl ? "" : editableToken;
       if (token !== editableToken) {
-        setEditableToken('');
+        setEditableToken("");
       }
-      const targetUrl = isOfficialUrl && officialUrl ? officialUrl.trim() : editableUrl.trim();
+      const targetUrl =
+        isOfficialUrl && officialUrl ? officialUrl.trim() : editableUrl.trim();
       if (targetUrl !== editableUrl) {
         setEditableUrl(targetUrl);
       }
@@ -139,7 +201,7 @@ export function useConnectionManager(): ConnectionManagerState {
       // Disconnect cleanly, then reconnect
       disconnect();
       // Small delay to ensure clean disconnect
-      await new Promise(r => setTimeout(r, 100));
+      await new Promise((r) => setTimeout(r, 100));
       try {
         await connect(targetUrl, token);
       } catch {
@@ -148,7 +210,15 @@ export function useConnectionManager(): ConnectionManagerState {
     } else {
       setDialogOpen(true);
     }
-  }, [connect, disconnect, editableUrl, editableToken, connectionState, serverSideAuth, officialUrl]);
+  }, [
+    connect,
+    disconnect,
+    editableUrl,
+    editableToken,
+    connectionState,
+    serverSideAuth,
+    officialUrl,
+  ]);
 
   return {
     dialogOpen,
