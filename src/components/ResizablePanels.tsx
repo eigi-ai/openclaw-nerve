@@ -1,4 +1,10 @@
-import { useState, useRef, useCallback, useEffect, type ReactNode } from 'react';
+import {
+  useState,
+  useRef,
+  useCallback,
+  useEffect,
+  type ReactNode,
+} from "react";
 
 /** Props for {@link ResizablePanels}. */
 interface ResizablePanelsProps {
@@ -38,8 +44,8 @@ export function ResizablePanels({
   onResize,
   minLeftPercent = 30,
   maxLeftPercent = 75,
-  leftClassName = '',
-  rightClassName = '',
+  leftClassName = "",
+  rightClassName = "",
 }: ResizablePanelsProps) {
   const [localPercent, setLocalPercent] = useState(leftPercent);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -56,23 +62,29 @@ export function ResizablePanels({
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
     isDragging.current = true;
-    document.body.style.cursor = 'col-resize';
-    document.body.style.userSelect = 'none';
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
   }, []);
 
-  const handleMouseMove = useCallback((e: MouseEvent) => {
-    if (!isDragging.current || !containerRef.current) return;
-    const rect = containerRef.current.getBoundingClientRect();
-    const newPercent = ((e.clientX - rect.left) / rect.width) * 100;
-    const clamped = Math.max(minLeftPercent, Math.min(maxLeftPercent, newPercent));
-    setLocalPercent(clamped);
-  }, [minLeftPercent, maxLeftPercent]);
+  const handleMouseMove = useCallback(
+    (e: MouseEvent) => {
+      if (!isDragging.current || !containerRef.current) return;
+      const rect = containerRef.current.getBoundingClientRect();
+      const newPercent = ((e.clientX - rect.left) / rect.width) * 100;
+      const clamped = Math.max(
+        minLeftPercent,
+        Math.min(maxLeftPercent, newPercent),
+      );
+      setLocalPercent(clamped);
+    },
+    [minLeftPercent, maxLeftPercent],
+  );
 
   const handleMouseUp = useCallback(() => {
     if (isDragging.current) {
       isDragging.current = false;
-      document.body.style.cursor = '';
-      document.body.style.userSelect = '';
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
       onResize(localPercent);
     }
   }, [localPercent, onResize]);
@@ -85,11 +97,11 @@ export function ResizablePanels({
   }, [onResize]);
 
   useEffect(() => {
-    window.addEventListener('mousemove', handleMouseMove);
-    window.addEventListener('mouseup', handleMouseUp);
+    window.addEventListener("mousemove", handleMouseMove);
+    window.addEventListener("mouseup", handleMouseUp);
     return () => {
-      window.removeEventListener('mousemove', handleMouseMove);
-      window.removeEventListener('mouseup', handleMouseUp);
+      window.removeEventListener("mousemove", handleMouseMove);
+      window.removeEventListener("mouseup", handleMouseUp);
     };
   }, [handleMouseMove, handleMouseUp]);
 
@@ -102,7 +114,7 @@ export function ResizablePanels({
       >
         {left}
       </div>
-      
+
       {/* Resize handle */}
       <div
         onMouseDown={handleMouseDown}
@@ -113,7 +125,7 @@ export function ResizablePanels({
         {/* Visual feedback line on hover */}
         <div className="absolute inset-y-0 -left-0.5 -right-0.5 opacity-0 group-hover:opacity-100 bg-primary/20 transition-opacity pointer-events-none" />
       </div>
-      
+
       {/* Right panel */}
       <div
         className={`min-h-0 overflow-hidden ${rightClassName}`}
