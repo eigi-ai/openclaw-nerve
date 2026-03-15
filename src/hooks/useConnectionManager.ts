@@ -108,6 +108,9 @@ export function useConnectionManager(): ConnectionManagerState {
     if (autoConnectAttempted.current) return;
     autoConnectAttempted.current = true;
 
+    // StrictMode guard: prevent stale callbacks from firing after unmount.
+    let cancelled = false;
+
     const saved = loadConfig();
     const queryConfig = readQueryConnectionConfig();
     const hasQueryGateway = Boolean(queryConfig.wsUrl);
@@ -126,6 +129,8 @@ export function useConnectionManager(): ConnectionManagerState {
 
     // Always fetch defaults once on mount to establish serverSideAuth and officialUrl
     fetchConnectDefaults().then((defaults) => {
+      if (cancelled) return;
+
       const isServerSideAuth = defaults?.serverSideAuth ?? false;
       setServerSideAuth(isServerSideAuth);
 
@@ -172,6 +177,12 @@ export function useConnectionManager(): ConnectionManagerState {
         });
       }
     });
+
+    return () => {
+      cancelled = true;
+      // Allow StrictMode re-mount to attempt auto-connect again
+      autoConnectAttempted.current = false;
+    };
   }, [handleConnect]);
 
   const handleReconnect = useCallback(async () => {

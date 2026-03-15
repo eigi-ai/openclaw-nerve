@@ -117,7 +117,7 @@ describe("useWebSocket", () => {
   });
 
   describe("Connect handshake payload", () => {
-    it("should include a stable per-tab client.instanceId in connect params", async () => {
+    it("should use control-ui profile with no device field in connect params", async () => {
       const wsInstances: MockWebSocket[] = [];
       const OriginalMockWS = MockWebSocket;
       (globalThis as unknown as { WebSocket: typeof MockWebSocket }).WebSocket =
@@ -130,8 +130,14 @@ describe("useWebSocket", () => {
 
       const { result } = renderHook(() => useWebSocket());
 
+      let connectSettled = false;
       act(() => {
-        result.current.connect("ws://localhost:8080", "test-token");
+        result.current
+          .connect("ws://localhost:8080", "test-token")
+          .catch(() => {})
+          .finally(() => {
+            connectSettled = true;
+          });
       });
 
       await act(async () => {
@@ -150,14 +156,37 @@ describe("useWebSocket", () => {
       const connectReq = getConnectRequest(ws);
       expect(connectReq).toBeTruthy();
 
-      const params = connectReq?.params as
-        | { client?: { instanceId?: string } }
-        | undefined;
-      expect(params?.client?.instanceId).toBeTruthy();
-      expect(typeof params?.client?.instanceId).toBe("string");
+      const params = connectReq?.params as Record<string, unknown> | undefined;
+      const client = params?.client as Record<string, unknown> | undefined;
+
+      // Control-UI auth model: token-only, no device pairing
+      expect(client?.id).toBe("openclaw-control-ui");
+      expect(client?.mode).toBe("ui");
+      // No instanceId or device field in control-ui mode
+      expect(client).not.toHaveProperty("instanceId");
+      expect(params).not.toHaveProperty("device");
+
+      // Scopes should NOT include operator.pairing
+      const scopes = params?.scopes as string[] | undefined;
+      expect(scopes).not.toContain("operator.pairing");
+      expect(scopes).toContain("operator.admin");
+
+      // Complete handshake to avoid dangling timeout
+      const reqId = connectReq?.id as string;
+      act(() => {
+        ws.simulateMessage({ type: "res", id: reqId, ok: true, payload: {} });
+      });
+
+      // Disconnect cleanly
+      act(() => {
+        result.current.disconnect();
+      });
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
     });
 
-    it("should reuse the same instanceId across reconnects in the same tab", async () => {
+    it("should use the same control-ui profile across reconnects", async () => {
       const wsInstances: MockWebSocket[] = [];
       const OriginalMockWS = MockWebSocket;
       (globalThis as unknown as { WebSocket: typeof MockWebSocket }).WebSocket =
@@ -171,7 +200,9 @@ describe("useWebSocket", () => {
       const { result } = renderHook(() => useWebSocket());
 
       act(() => {
-        result.current.connect("ws://localhost:8080", "test-token");
+        result.current
+          .connect("ws://localhost:8080", "test-token")
+          .catch(() => {});
       });
 
       await act(async () => {
@@ -190,12 +221,10 @@ describe("useWebSocket", () => {
       const firstConnectReq = getConnectRequest(firstWs);
       expect(firstConnectReq).toBeTruthy();
 
-      const firstInstanceId = (
-        firstConnectReq?.params as
-          | { client?: { instanceId?: string } }
-          | undefined
-      )?.client?.instanceId;
-      expect(firstInstanceId).toBeTruthy();
+      const firstClient = (
+        firstConnectReq?.params as Record<string, unknown> | undefined
+      )?.client as Record<string, unknown> | undefined;
+      expect(firstClient?.id).toBe("openclaw-control-ui");
 
       // complete auth so reconnect is enabled
       const firstReqId = firstConnectReq?.id as string | undefined;
@@ -209,13 +238,21 @@ describe("useWebSocket", () => {
         });
       });
 
-      // unexpected close triggers reconnect
+      // unexpected close triggers reconnect — use advanceTimersByTime
+      // instead of runAllTimersAsync to avoid infinite reconnect loop
       act(() => {
-        firstWs.close();
+        firstWs.readyState = MockWebSocket.CLOSED;
+        firstWs.onclose?.(new CloseEvent("close"));
       });
 
+      // Advance past reconnect delay (base 1000ms + jitter ≤ 500ms)
       await act(async () => {
-        await vi.runAllTimersAsync();
+        await vi.advanceTimersByTimeAsync(2000);
+      });
+
+      // Advance for new WS to open
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(50);
       });
 
       expect(wsInstances.length).toBeGreaterThanOrEqual(2);
@@ -230,13 +267,31 @@ describe("useWebSocket", () => {
       });
 
       const secondConnectReq = getConnectRequest(secondWs);
-      const secondInstanceId = (
-        secondConnectReq?.params as
-          | { client?: { instanceId?: string } }
-          | undefined
-      )?.client?.instanceId;
+      const secondClient = (
+        secondConnectReq?.params as Record<string, unknown> | undefined
+      )?.client as Record<string, unknown> | undefined;
 
-      expect(secondInstanceId).toBe(firstInstanceId);
+      expect(secondClient?.id).toBe("openclaw-control-ui");
+      expect(secondClient?.mode).toBe("ui");
+
+      // Complete second handshake to avoid dangling timeout
+      const secondReqId = secondConnectReq?.id as string;
+      act(() => {
+        secondWs.simulateMessage({
+          type: "res",
+          id: secondReqId,
+          ok: true,
+          payload: {},
+        });
+      });
+
+      // Disconnect cleanly
+      act(() => {
+        result.current.disconnect();
+      });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(100);
+      });
     });
 
     it("should keep initial connect failures to a single browser websocket attempt", async () => {

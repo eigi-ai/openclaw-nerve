@@ -31,32 +31,17 @@ const RECONNECT_BASE_DELAY = 1000;
 const RECONNECT_MAX_DELAY = 30000;
 const HANDSHAKE_TIMEOUT_MS = 12000;
 const CONNECT_RESPONSE_TIMEOUT_MS = 5000;
-const INSTANCE_ID_STORAGE_KEY = "oc-webchat-instance-id";
-const WEBCHAT_PROFILE: GatewayClientProfile = {
-  id: "webchat-ui",
-  mode: "webchat",
+
+/**
+ * Control-UI auth model: token-only, no device pairing required.
+ * Matches Studio's personalized-eigi socket approach.
+ * The gateway grants scopes based on auth.token when
+ * allowInsecureAuth + dangerouslyDisableDeviceAuth are enabled.
+ */
+const CLIENT_PROFILE: GatewayClientProfile = {
+  id: "openclaw-control-ui",
+  mode: "ui",
 };
-
-function generateInstanceId(): string {
-  return crypto.randomUUID
-    ? crypto.randomUUID()
-    : `inst-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-}
-
-function getOrCreateInstanceId(): string {
-  const fallback = generateInstanceId();
-  if (typeof window === "undefined") return fallback;
-
-  try {
-    const existing = window.sessionStorage.getItem(INSTANCE_ID_STORAGE_KEY);
-    if (existing) return existing;
-
-    window.sessionStorage.setItem(INSTANCE_ID_STORAGE_KEY, fallback);
-    return fallback;
-  } catch {
-    return fallback;
-  }
-}
 
 /**
  * Low-level WebSocket hook for the OpenClaw gateway protocol.
@@ -99,7 +84,6 @@ export function useWebSocket(): UseWebSocketReturn {
       ) => Promise<void>)
     | null
   >(null);
-  const instanceIdRef = useRef(getOrCreateInstanceId());
   const connectionGenRef = useRef(0);
 
   const rejectPending = useCallback((reason: Error) => {
@@ -152,7 +136,7 @@ export function useWebSocket(): UseWebSocketReturn {
       url: string,
       token: string,
       isReconnect: boolean,
-      profile: GatewayClientProfile = WEBCHAT_PROFILE,
+      profile: GatewayClientProfile = CLIENT_PROFILE,
     ): Promise<void> => {
       return new Promise((resolve, reject) => {
         const rejectConnectIfPending = (message: string) => {
@@ -280,7 +264,6 @@ export function useWebSocket(): UseWebSocketReturn {
                     version: "0.1.0",
                     platform: "web",
                     mode: profile.mode,
-                    instanceId: instanceIdRef.current,
                   },
                   role: "operator",
                   scopes: [
@@ -288,8 +271,10 @@ export function useWebSocket(): UseWebSocketReturn {
                     "operator.read",
                     "operator.write",
                     "operator.approvals",
-                    "operator.pairing",
                   ],
+                  // No `device` field — token-only auth via allowInsecureAuth.
+                  // Matches Studio's control-ui approach: gateway grants scopes
+                  // based on auth.token without requiring device pairing.
                   auth: { token },
                   caps: ["tool-events"],
                 },
@@ -422,7 +407,7 @@ export function useWebSocket(): UseWebSocketReturn {
               doConnectRef.current
             ) {
               doConnectRef
-                .current(creds.url, creds.token, true, WEBCHAT_PROFILE)
+                .current(creds.url, creds.token, true, CLIENT_PROFILE)
                 .catch(() => {
                   // Error handling is done in onclose/onerror
                 });
@@ -474,7 +459,7 @@ export function useWebSocket(): UseWebSocketReturn {
       clearReconnectTimeout();
       reconnectAttemptRef.current = 0;
       setReconnectAttempt(0);
-      return doConnect(url, token, false, WEBCHAT_PROFILE);
+      return doConnect(url, token, false, CLIENT_PROFILE);
     },
     [doConnect, clearReconnectTimeout],
   );
