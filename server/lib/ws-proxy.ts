@@ -154,7 +154,7 @@ export function setupWebSocketProxy(server: HttpServer | HttpsServer): void {
 
     if (
       !["ws:", "wss:"].includes(targetUrl.protocol) ||
-      !WS_ALLOWED_HOSTS.has(targetUrl.hostname)
+      !isAllowedTargetHost(targetUrl.hostname)
     ) {
       console.warn(`${tag} Rejected: target not allowed: ${target}`);
       clientWs.close(1008, "Target not allowed");
@@ -180,6 +180,40 @@ export function setupWebSocketProxy(server: HttpServer | HttpsServer): void {
     const isTrusted = canInjectGatewayToken(req);
     createGatewayRelay(clientWs, targetUrl, clientOrigin, connId, isTrusted);
   });
+}
+
+/**
+ * Host allowlist matcher.
+ *
+ * Supported patterns in WS_ALLOWED_HOSTS:
+ * - exact host: `dev-claw-25.eigi.ai`
+ * - wildcard any: `*`
+ * - wildcard suffix: `*.eigi.ai`
+ * - suffix shorthand: `.eigi.ai`
+ */
+function isAllowedTargetHost(hostname: string): boolean {
+  const host = hostname.trim().toLowerCase();
+  if (!host) return false;
+
+  for (const raw of WS_ALLOWED_HOSTS) {
+    const rule = raw.trim().toLowerCase();
+    if (!rule) continue;
+
+    if (rule === "*") return true;
+    if (rule === host) return true;
+
+    if (rule.startsWith("*.")) {
+      const suffix = rule.slice(1); // keep leading dot
+      if (host.endsWith(suffix)) return true;
+      continue;
+    }
+
+    if (rule.startsWith(".")) {
+      if (host.endsWith(rule)) return true;
+    }
+  }
+
+  return false;
 }
 
 function isOfficialGatewayTarget(targetUrl: URL): boolean {
