@@ -444,7 +444,6 @@ function createGatewayRelay(
           parsedMsg.type === "res" &&
           savedConnectMsg &&
           connectSent &&
-          !hasRetriedTokenMismatch &&
           parsedMsg.id === savedConnectMsg.id &&
           parsedMsg.ok === false
         ) {
@@ -452,12 +451,39 @@ function createGatewayRelay(
             (parsedMsg.error as Record<string, unknown> | undefined) || {};
           const details =
             (error.details as Record<string, unknown> | undefined) || {};
+          const errorMessage = String(error.message || "").toLowerCase();
+
+          // Gateways may return pairing-required in the connect response (instead of closing 1008).
+          // Retry once without device identity so token auth can proceed with reduced scopes.
+          const isPairingRequired =
+            errorMessage.includes("pairing required") ||
+            details.code === "AUTH_NOT_PAIRED" ||
+            details.authReason === "pairing_required";
+
+          if (isPairingRequired && useDeviceIdentity && !hasRetried) {
+            hasRetried = true;
+            useDeviceIdentity = false;
+            connectSent = false;
+            handshakeComplete = false;
+
+            console.log(
+              `${tag} Pairing required on connect response — retrying without device identity`,
+            );
+
+            dispatchConnect(null);
+            return;
+          }
+
           const isTokenMismatch =
             details.code === "AUTH_TOKEN_MISMATCH" ||
             details.authReason === "token_mismatch" ||
             details.recommendedNextStep === "retry_with_device_token";
 
-          if (isTokenMismatch && details.canRetryWithDeviceToken === true) {
+          if (
+            !hasRetriedTokenMismatch &&
+            isTokenMismatch &&
+            details.canRetryWithDeviceToken === true
+          ) {
             hasRetriedTokenMismatch = true;
             connectSent = false;
             handshakeComplete = false;
