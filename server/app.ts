@@ -19,6 +19,7 @@ import { errorHandler } from './middleware/error-handler.js';
 import { securityHeaders } from './middleware/security-headers.js';
 import { authMiddleware } from './middleware/auth.js';
 import { config } from './lib/config.js';
+import { resolveCorsOrigin } from './lib/origin-utils.js';
 
 import healthRoutes from './routes/health.js';
 import authRoutes from './routes/auth.js';
@@ -49,30 +50,6 @@ import kanbanRoutes from './routes/kanban.js';
 
 const app = new Hono();
 
-// ── CORS — only allow requests from known local origins ──────────────
-
-const ALLOWED_ORIGINS = new Set([
-  `http://localhost:${config.port}`,
-  `https://localhost:${config.sslPort}`,
-  `http://127.0.0.1:${config.port}`,
-  `https://127.0.0.1:${config.sslPort}`,
-]);
-
-// Allow additional origins via ALLOWED_ORIGINS env var (comma-separated)
-// Normalizes via URL constructor to prevent malformed entries; rejects "null" origins
-const extraOrigins = process.env.ALLOWED_ORIGINS;
-if (extraOrigins) {
-  for (const raw of extraOrigins.split(',')) {
-    const trimmed = raw.trim();
-    if (!trimmed || trimmed === 'null') continue;
-    try {
-      ALLOWED_ORIGINS.add(new URL(trimmed).origin);
-    } catch {
-      // skip malformed origins
-    }
-  }
-}
-
 // ── Middleware ────────────────────────────────────────────────────────
 
 app.onError(errorHandler);
@@ -80,15 +57,7 @@ app.use('*', logger());
 app.use(
   '*',
   cors({
-    origin: (origin) => {
-      // No Origin header: allow only when bound to localhost (same-origin / non-browser).
-      // When network-exposed (HOST=0.0.0.0), reject to prevent server-to-server CSRF.
-      if (!origin) {
-        const isLocal = config.host === '127.0.0.1' || config.host === 'localhost' || config.host === '::1';
-        return isLocal ? origin : null;
-      }
-      return ALLOWED_ORIGINS.has(origin) ? origin : null;
-    },
+    origin: resolveCorsOrigin,
     credentials: true,
     allowMethods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowHeaders: ['Content-Type', 'Authorization'],

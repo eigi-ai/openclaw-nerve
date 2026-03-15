@@ -3,6 +3,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import NerveLogo from '@/components/NerveLogo';
+import { areGatewayUrlsEquivalent } from '@/lib/gatewayUrls';
 
 interface ConnectDialogProps {
   open: boolean;
@@ -10,11 +11,20 @@ interface ConnectDialogProps {
   error: string;
   defaultUrl: string;
   defaultToken?: string;
+  officialUrl?: string | null;
   serverSideAuth?: boolean;
 }
 
 /** Initial connection dialog for entering the gateway URL and token. */
-export function ConnectDialog({ open, onConnect, error, defaultUrl, defaultToken = '', serverSideAuth }: ConnectDialogProps) {
+export function ConnectDialog({
+  open,
+  onConnect,
+  error,
+  defaultUrl,
+  defaultToken = '',
+  officialUrl,
+  serverSideAuth,
+}: ConnectDialogProps) {
   const [url, setUrl] = useState(defaultUrl);
   const [token, setToken] = useState(defaultToken);
   const [connecting, setConnecting] = useState(false);
@@ -28,44 +38,26 @@ export function ConnectDialog({ open, onConnect, error, defaultUrl, defaultToken
   }, [defaultUrl, defaultToken, open]);
 
   const handleConnect = async () => {
-    const isDefaultHost = url.trim() === defaultUrl.trim();
-    if (!url.trim() || (!token.trim() && (!serverSideAuth || !isDefaultHost))) return;
+    const isOfficialUrl = areGatewayUrlsEquivalent(url, officialUrl);
+    if (!url.trim() || (!token.trim() && (!serverSideAuth || !isOfficialUrl))) return;
 
-    // Force empty token when in server-side auth mode for the default host.
+    // Force empty token only for the official server-managed URL.
     // This allows the proxy to perform injection and prevents stale/hidden local tokens
     // from overriding server-side credentials.
-    const effectiveToken = (serverSideAuth && isDefaultHost) ? '' : token.trim();
+    const effectiveUrl = (isOfficialUrl && officialUrl) ? officialUrl.trim() : url.trim();
+    const effectiveToken = (serverSideAuth && isOfficialUrl) ? '' : token.trim();
 
     setConnecting(true);
     try {
-      await onConnect(url.trim(), effectiveToken);
+      await onConnect(effectiveUrl, effectiveToken);
     } catch (err) {
       console.debug('[ConnectDialog] Connection failed:', err);
     }
     setConnecting(false);
   };
-a
+
   return (
     <Dialog open={open}>
-      <DialogContent className="bg-card border-border font-mono max-w-[380px] [&>button]:hidden" showCloseButton={false}>
-        <DialogHeader>
-          <DialogTitle className="text-primary text-xs font-bold tracking-[2px] uppercase">
-            // CONNECT TO GATEWAY
-          </DialogTitle>
-        </DialogHeader>
-        <div className="flex flex-col gap-3.5">
-          <label className="flex flex-col gap-1 text-[11px] text-muted-foreground uppercase tracking-[1px]">
-            WebSocket URL
-            <Input
-              value={url}
-              onChange={e => setUrl(e.target.value)}
-              spellCheck={false}
-              className="bg-background border-border text-foreground font-mono text-[13px]"
-            />
-          </label>
-          {(!serverSideAuth || url.trim() !== defaultUrl.trim()) && (
-            <label className="flex flex-col gap-1 text-[11px] text-muted-foreground uppercase tracking-[1px]">
-              Auth Token
       <DialogContent className="shell-panel max-w-[min(92vw,560px)] p-0 overflow-hidden [&>button]:hidden" showCloseButton={false}>
         <div className="border-b border-border/70 bg-gradient-to-r from-primary/12 via-transparent to-info/6 px-5 py-4 sm:px-6">
           <DialogHeader className="gap-3 text-left">
@@ -81,7 +73,7 @@ a
               </div>
             </div>
             <DialogDescription className="max-w-[42ch] text-sm leading-6 text-muted-foreground">
-              Point Nerve at the gateway endpoint, provide your token, and the full cockpit comes online.
+              Point Nerve at the gateway endpoint, provide your token when needed, and bring the cockpit online.
             </DialogDescription>
           </DialogHeader>
         </div>
@@ -97,9 +89,9 @@ a
             </div>
             <div className="shell-panel rounded-2xl px-4 py-3">
               <div className="text-[10px] font-medium uppercase tracking-[0.24em] text-muted-foreground">Credentials</div>
-              <div className="mt-2 text-sm font-medium text-foreground">Use the gateway token</div>
+              <div className="mt-2 text-sm font-medium text-foreground">Use server auth when available</div>
               <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                Paste the same token configured in OpenClaw. Nerve will reuse it for reconnects.
+                The token field disappears for the official gateway URL when the server can inject credentials safely.
               </p>
             </div>
           </div>
@@ -117,32 +109,22 @@ a
                 className="font-mono text-base sm:text-[13px]"
               />
             </label>
-            <label className="flex flex-col gap-2">
-              <span className="text-[11px] font-medium uppercase tracking-[0.2em] text-muted-foreground">
-                Gateway token
-              </span>
-              <Input
-                type="password"
-                value={token}
-                onChange={e => setToken(e.target.value)}
-                onKeyDown={e => e.key === 'Enter' && handleConnect()}
-                spellCheck={false}
-                className="bg-background border-border text-foreground font-mono text-[13px]"
-              />
-            </label>
-          )}
-          <Button
-            onClick={handleConnect}
-            disabled={connecting}
-            className="bg-primary text-primary-foreground font-mono text-xs font-bold tracking-[1px] uppercase"
-          >
-            {connecting ? 'CONNECTING…' : 'CONNECT'}
-          </Button>
-          {error && <div className="text-destructive text-[11px]">{error}</div>}
-                placeholder="Paste the token from your gateway config"
-                className="font-mono text-base sm:text-[13px]"
-              />
-            </label>
+            {(!serverSideAuth || !officialUrl || !areGatewayUrlsEquivalent(url, officialUrl)) && (
+              <label className="flex flex-col gap-2">
+                <span className="text-[11px] font-medium uppercase tracking-[0.2em] text-muted-foreground">
+                  Gateway token
+                </span>
+                <Input
+                  type="password"
+                  value={token}
+                  onChange={e => setToken(e.target.value)}
+                  onKeyDown={e => e.key === 'Enter' && handleConnect()}
+                  spellCheck={false}
+                  placeholder="Paste the token from your gateway config"
+                  className="font-mono text-base sm:text-[13px]"
+                />
+              </label>
+            )}
           </div>
 
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">

@@ -11,12 +11,14 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { useGateway, loadConfig, saveConfig } from '@/contexts/GatewayContext';
 import { DEFAULT_GATEWAY_WS } from '@/lib/constants';
+import { areGatewayUrlsEquivalent } from '@/lib/gatewayUrls';
 
 export interface ConnectionManagerState {
   dialogOpen: boolean;
   setDialogOpen: (open: boolean) => void;
   editableUrl: string;
   setEditableUrl: (url: string) => void;
+  officialUrl: string | null;
   editableToken: string;
   setEditableToken: (token: string) => void;
   handleConnect: (url: string, token: string) => Promise<void>;
@@ -80,11 +82,13 @@ export function useConnectionManager(): ConnectionManagerState {
 
       const savedUrl = saved.url?.trim();
       const officialWsUrl = defaults?.wsUrl?.trim();
+      const savedMatchesOfficial = areGatewayUrlsEquivalent(savedUrl, officialWsUrl);
 
       if (officialWsUrl) {
         setOfficialUrl(officialWsUrl);
-        // Only override editableUrl if it's currently empty
-        if (!savedUrl) {
+        // Canonicalize the managed URL path so stale localhost aliases
+        // do not keep the app in manual-connect mode.
+        if (!savedUrl || savedMatchesOfficial) {
           setEditableUrl(officialWsUrl);
         }
       }
@@ -94,13 +98,16 @@ export function useConnectionManager(): ConnectionManagerState {
         setEditableToken(defaults.token);
       }
 
-      // Auto-connect if server-side auth is supported and:
-      // 1. No URL is saved yet
-      // 2. OR the saved URL is the official one and there is no saved token
+      if (isServerSideAuth && officialWsUrl && (!savedUrl || savedMatchesOfficial)) {
+        setEditableToken('');
+      }
+
+      // Auto-connect if server-side auth is supported and the saved gateway is
+      // either empty or the same official gateway under a loopback alias.
       if (
         isServerSideAuth &&
         officialWsUrl &&
-        (!savedUrl || (savedUrl === officialWsUrl && !saved.token))
+        (!savedUrl || savedMatchesOfficial)
       ) {
         handleConnect(officialWsUrl, '').catch(() => {
           // Auto-connect failed - user can manually connect via dialog
@@ -115,22 +122,26 @@ export function useConnectionManager(): ConnectionManagerState {
       return;
     }
 
-    const isOfficialUrl = editableUrl.trim() === officialUrl?.trim();
+    const isOfficialUrl = areGatewayUrlsEquivalent(editableUrl, officialUrl);
     if (editableUrl && (editableToken || (serverSideAuth && isOfficialUrl))) {
       // Force empty token if server side auth is active for this URL
       const token = serverSideAuth && isOfficialUrl ? '' : editableToken;
       if (token !== editableToken) {
         setEditableToken('');
       }
+      const targetUrl = isOfficialUrl && officialUrl ? officialUrl.trim() : editableUrl.trim();
+      if (targetUrl !== editableUrl) {
+        setEditableUrl(targetUrl);
+      }
 
       // Save the new config first
-      saveConfig(editableUrl, token);
+      saveConfig(targetUrl, token);
       // Disconnect cleanly, then reconnect
       disconnect();
       // Small delay to ensure clean disconnect
       await new Promise(r => setTimeout(r, 100));
       try {
-        await connect(editableUrl, token);
+        await connect(targetUrl, token);
       } catch {
         // Connection failed - don't loop, just stay disconnected
       }
@@ -144,6 +155,7 @@ export function useConnectionManager(): ConnectionManagerState {
     setDialogOpen,
     editableUrl,
     setEditableUrl,
+    officialUrl,
     editableToken,
     setEditableToken,
     handleConnect,
