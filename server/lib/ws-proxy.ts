@@ -290,6 +290,7 @@ function createGatewayRelay(
   let handshakeComplete = false;
   let useDeviceIdentity = true;
   let hasRetried = false;
+  let hasRetriedTokenMismatch = false;
   /** Saved connect message — held separately from pending until challenge arrives */
   let savedConnectMsg: Record<string, unknown> | null = null;
   /** Whether the saved connect message has been dispatched to the gateway */
@@ -400,16 +401,19 @@ function createGatewayRelay(
 
     // Gateway → Client
     gwWs.on("message", (data: Buffer | string, isBinary: boolean) => {
+      let parsedMsg: Record<string, unknown> | null = null;
+
       // Capture challenge nonce before handshake completes
       if (!handshakeComplete && !isBinary) {
         try {
-          const msg = JSON.parse(data.toString());
+          const msg = JSON.parse(data.toString()) as Record<string, unknown>;
+          parsedMsg = msg;
           if (
             msg.type === "event" &&
             msg.event === "connect.challenge" &&
-            msg.payload?.nonce
+            (msg.payload as { nonce?: string } | undefined)?.nonce
           ) {
-            challengeNonce = msg.payload.nonce;
+            challengeNonce = (msg.payload as { nonce: string }).nonce;
             // If we have a deferred connect message waiting, send it now with identity
             if (
               savedConnectMsg &&
@@ -421,6 +425,66 @@ function createGatewayRelay(
           }
         } catch {
           /* ignore */
+        }
+      }
+
+      // Gateway may reject browser token but explicitly recommend retrying with device token.
+      // Swallow the first auth mismatch response and transparently retry without auth.token.
+      if (!isBinary) {
+        if (!parsedMsg) {
+          try {
+            parsedMsg = JSON.parse(data.toString()) as Record<string, unknown>;
+          } catch {
+            parsedMsg = null;
+          }
+        }
+
+        if (
+          parsedMsg &&
+          parsedMsg.type === "res" &&
+          savedConnectMsg &&
+          connectSent &&
+          !hasRetriedTokenMismatch &&
+          parsedMsg.id === savedConnectMsg.id &&
+          parsedMsg.ok === false
+        ) {
+          const error =
+            (parsedMsg.error as Record<string, unknown> | undefined) || {};
+          const details =
+            (error.details as Record<string, unknown> | undefined) || {};
+          const isTokenMismatch =
+            details.code === "AUTH_TOKEN_MISMATCH" ||
+            details.authReason === "token_mismatch" ||
+            details.recommendedNextStep === "retry_with_device_token";
+
+          if (isTokenMismatch && details.canRetryWithDeviceToken === true) {
+            hasRetriedTokenMismatch = true;
+            connectSent = false;
+            handshakeComplete = false;
+
+            const params =
+              (savedConnectMsg.params as Record<string, unknown> | undefined) ||
+              {};
+            const auth =
+              (params.auth as Record<string, unknown> | undefined) || {};
+
+            // Remove browser token for retry, letting device token auth take precedence.
+            const { token: _ignored, ...authWithoutToken } = auth;
+            savedConnectMsg = {
+              ...savedConnectMsg,
+              params: {
+                ...params,
+                auth: authWithoutToken,
+              },
+            };
+
+            console.log(
+              `${tag} AUTH_TOKEN_MISMATCH on connect — retrying with device token only`,
+            );
+
+            dispatchConnect(challengeNonce);
+            return;
+          }
         }
       }
 
