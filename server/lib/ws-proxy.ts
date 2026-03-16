@@ -30,6 +30,11 @@ import { canInjectGatewayToken } from "./trust-utils.js";
 /** @internal — exported for test overrides */
 export const _internals = { challengeTimeoutMs: 5_000 };
 
+/** Max gateway connection retries when closed before handshake completes. */
+const MAX_GATEWAY_CONNECT_RETRIES = 5;
+/** Delay between gateway connection retries (ms). */
+const GATEWAY_RETRY_DELAY_MS = 3_000;
+
 /**
  * Methods the gateway restricts for webchat clients.
  * We intercept these and proxy via `openclaw gateway call` (full CLI scopes).
@@ -291,6 +296,8 @@ function createGatewayRelay(
   let useDeviceIdentity = true;
   let hasRetried = false;
   let hasRetriedTokenMismatch = false;
+  /** How many times we've retried after "closed before connect" failures. */
+  let gatewayConnectRetries = 0;
   /** Saved connect message — held separately from pending until challenge arrives */
   let savedConnectMsg: Record<string, unknown> | null = null;
   /** Whether the saved connect message has been dispatched to the gateway */
@@ -571,6 +578,27 @@ function createGatewayRelay(
         useDeviceIdentity = false;
         hasRetried = true;
         openGateway();
+        return;
+      }
+
+      // Gateway closed before handshake completed (e.g. still initializing).
+      // Retry with backoff instead of immediately failing the client.
+      if (
+        !handshakeComplete &&
+        !isDeviceRejection &&
+        gatewayConnectRetries < MAX_GATEWAY_CONNECT_RETRIES &&
+        clientWs.readyState === WebSocket.OPEN
+      ) {
+        gatewayConnectRetries++;
+        console.log(
+          `${tag} Gateway closed before handshake (code=${code}) — retry ${gatewayConnectRetries}/${MAX_GATEWAY_CONNECT_RETRIES} in ${GATEWAY_RETRY_DELAY_MS}ms`,
+        );
+        // Reset handshake state for the retry
+        connectSent = false;
+        challengeNonce = null;
+        setTimeout(() => {
+          if (clientWs.readyState === WebSocket.OPEN) openGateway();
+        }, GATEWAY_RETRY_DELAY_MS);
         return;
       }
 
