@@ -66,7 +66,6 @@ describe("useWebSocket", () => {
     ).WebSocket;
     (globalThis as unknown as { WebSocket: typeof MockWebSocket }).WebSocket =
       MockWebSocket;
-    window.sessionStorage.clear();
     vi.useFakeTimers();
   });
 
@@ -117,7 +116,7 @@ describe("useWebSocket", () => {
   });
 
   describe("Connect handshake payload", () => {
-    it("should use control-ui profile with no device field in connect params", async () => {
+    it("should use webchat-ui profile with instanceId in connect params", async () => {
       const wsInstances: MockWebSocket[] = [];
       const OriginalMockWS = MockWebSocket;
       (globalThis as unknown as { WebSocket: typeof MockWebSocket }).WebSocket =
@@ -130,14 +129,10 @@ describe("useWebSocket", () => {
 
       const { result } = renderHook(() => useWebSocket());
 
-      let connectSettled = false;
       act(() => {
         result.current
           .connect("ws://localhost:8080", "test-token")
-          .catch(() => {})
-          .finally(() => {
-            connectSettled = true;
-          });
+          .catch(() => {});
       });
 
       await act(async () => {
@@ -159,16 +154,18 @@ describe("useWebSocket", () => {
       const params = connectReq?.params as Record<string, unknown> | undefined;
       const client = params?.client as Record<string, unknown> | undefined;
 
-      // Control-UI auth model: token-only, no device pairing
-      expect(client?.id).toBe("openclaw-control-ui");
-      expect(client?.mode).toBe("ui");
-      // No instanceId or device field in control-ui mode
-      expect(client).not.toHaveProperty("instanceId");
+      // Webchat-UI auth model: device identity injected by server-side proxy
+      expect(client?.id).toBe("webchat-ui");
+      expect(client?.mode).toBe("webchat");
+      // instanceId should be present for webchat-ui clients
+      expect(client).toHaveProperty("instanceId");
+      expect(typeof client?.instanceId).toBe("string");
+      // Browser doesn't send device field — proxy injects it server-side
       expect(params).not.toHaveProperty("device");
 
-      // Scopes should NOT include operator.pairing
+      // Scopes should include operator.pairing for device auth flow
       const scopes = params?.scopes as string[] | undefined;
-      expect(scopes).not.toContain("operator.pairing");
+      expect(scopes).toContain("operator.pairing");
       expect(scopes).toContain("operator.admin");
 
       // Complete handshake to avoid dangling timeout
@@ -186,7 +183,7 @@ describe("useWebSocket", () => {
       });
     });
 
-    it("should use the same control-ui profile across reconnects", async () => {
+    it("should use the same webchat-ui profile across reconnects", async () => {
       const wsInstances: MockWebSocket[] = [];
       const OriginalMockWS = MockWebSocket;
       (globalThis as unknown as { WebSocket: typeof MockWebSocket }).WebSocket =
@@ -224,7 +221,7 @@ describe("useWebSocket", () => {
       const firstClient = (
         firstConnectReq?.params as Record<string, unknown> | undefined
       )?.client as Record<string, unknown> | undefined;
-      expect(firstClient?.id).toBe("openclaw-control-ui");
+      expect(firstClient?.id).toBe("webchat-ui");
 
       // complete auth so reconnect is enabled
       const firstReqId = firstConnectReq?.id as string | undefined;
@@ -271,8 +268,8 @@ describe("useWebSocket", () => {
         secondConnectReq?.params as Record<string, unknown> | undefined
       )?.client as Record<string, unknown> | undefined;
 
-      expect(secondClient?.id).toBe("openclaw-control-ui");
-      expect(secondClient?.mode).toBe("ui");
+      expect(secondClient?.id).toBe("webchat-ui");
+      expect(secondClient?.mode).toBe("webchat");
 
       // Complete second handshake to avoid dangling timeout
       const secondReqId = secondConnectReq?.id as string;

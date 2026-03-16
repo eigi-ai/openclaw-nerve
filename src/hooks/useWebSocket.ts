@@ -22,26 +22,10 @@ interface UseWebSocketReturn {
   reconnectAttempt: number;
 }
 
-type GatewayClientProfile = {
-  id: string;
-  mode: string;
-};
-
 const RECONNECT_BASE_DELAY = 1000;
 const RECONNECT_MAX_DELAY = 30000;
 const HANDSHAKE_TIMEOUT_MS = 12000;
 const CONNECT_RESPONSE_TIMEOUT_MS = 5000;
-
-/**
- * Control-UI auth model: token-only, no device pairing required.
- * Matches Studio's personalized-eigi socket approach.
- * The gateway grants scopes based on auth.token when
- * allowInsecureAuth + dangerouslyDisableDeviceAuth are enabled.
- */
-const CLIENT_PROFILE: GatewayClientProfile = {
-  id: "openclaw-control-ui",
-  mode: "ui",
-};
 
 /**
  * Low-level WebSocket hook for the OpenClaw gateway protocol.
@@ -66,6 +50,17 @@ export function useWebSocket(): UseWebSocketReturn {
   const connectResolveRef = useRef<(() => void) | null>(null);
   const connectRejectRef = useRef<((e: Error) => void) | null>(null);
   const onEvent = useRef<((msg: GatewayEvent) => void) | null>(null);
+  const instanceIdRef = useRef(
+    (() => {
+      const key = "nerve-instance-id";
+      let id = sessionStorage.getItem(key);
+      if (!id) {
+        id = crypto.randomUUID();
+        sessionStorage.setItem(key, id);
+      }
+      return id;
+    })(),
+  );
 
   // Auto-reconnect state
   const credentialsRef = useRef<{ url: string; token: string } | null>(null);
@@ -76,13 +71,7 @@ export function useWebSocket(): UseWebSocketReturn {
   const intentionalDisconnectRef = useRef(false);
   const hasConnectedRef = useRef(false);
   const doConnectRef = useRef<
-    | ((
-        url: string,
-        token: string,
-        isReconnect: boolean,
-        profile?: GatewayClientProfile,
-      ) => Promise<void>)
-    | null
+    ((url: string, token: string, isReconnect: boolean) => Promise<void>) | null
   >(null);
   const connectionGenRef = useRef(0);
 
@@ -132,12 +121,7 @@ export function useWebSocket(): UseWebSocketReturn {
   );
 
   const doConnect = useCallback(
-    (
-      url: string,
-      token: string,
-      isReconnect: boolean,
-      profile: GatewayClientProfile = CLIENT_PROFILE,
-    ): Promise<void> => {
+    (url: string, token: string, isReconnect: boolean): Promise<void> => {
       return new Promise((resolve, reject) => {
         const rejectConnectIfPending = (message: string) => {
           if (connectRejectRef.current) {
@@ -196,12 +180,10 @@ export function useWebSocket(): UseWebSocketReturn {
           // This ensures the connection works regardless of how the user
           // accesses Nerve (direct, SSH tunnel, reverse proxy, HTTPS).
           // The server-side proxy handles Origin headers and auth.
-          let wsUrl = url;
           const proxyProtocol =
             window.location.protocol === "https:" ? "wss:" : "ws:";
           const proxyBase = `${proxyProtocol}//${window.location.host}/ws`;
-          wsUrl = `${proxyBase}?target=${encodeURIComponent(url)}`;
-          ws = new WebSocket(wsUrl);
+          ws = new WebSocket(`${proxyBase}?target=${encodeURIComponent(url)}`);
         } catch (e: unknown) {
           const errMsg = e instanceof Error ? e.message : String(e);
           setConnectError("Invalid URL: " + errMsg);
@@ -260,10 +242,11 @@ export function useWebSocket(): UseWebSocketReturn {
                   minProtocol: 3,
                   maxProtocol: 3,
                   client: {
-                    id: profile.id,
+                    id: "webchat-ui",
                     version: "0.1.0",
                     platform: "web",
-                    mode: profile.mode,
+                    mode: "webchat",
+                    instanceId: instanceIdRef.current,
                   },
                   role: "operator",
                   scopes: [
@@ -271,10 +254,8 @@ export function useWebSocket(): UseWebSocketReturn {
                     "operator.read",
                     "operator.write",
                     "operator.approvals",
+                    "operator.pairing",
                   ],
-                  // No `device` field — token-only auth via allowInsecureAuth.
-                  // Matches Studio's control-ui approach: gateway grants scopes
-                  // based on auth.token without requiring device pairing.
                   auth: { token },
                   caps: ["tool-events"],
                 },
@@ -406,11 +387,9 @@ export function useWebSocket(): UseWebSocketReturn {
               !intentionalDisconnectRef.current &&
               doConnectRef.current
             ) {
-              doConnectRef
-                .current(creds.url, creds.token, true, CLIENT_PROFILE)
-                .catch(() => {
-                  // Error handling is done in onclose/onerror
-                });
+              doConnectRef.current(creds.url, creds.token, true).catch(() => {
+                // Error handling is done in onclose/onerror
+              });
             }
           }, delay);
         };
@@ -459,7 +438,7 @@ export function useWebSocket(): UseWebSocketReturn {
       clearReconnectTimeout();
       reconnectAttemptRef.current = 0;
       setReconnectAttempt(0);
-      return doConnect(url, token, false, CLIENT_PROFILE);
+      return doConnect(url, token, false);
     },
     [doConnect, clearReconnectTimeout],
   );
