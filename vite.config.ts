@@ -32,6 +32,7 @@ export default defineConfig({
     port,
     host: process.env.VITE_HOST || '127.0.0.1',
     https: httpsConfig,
+    allowedHosts: ['host.docker.internal'],
     proxy: {
       '/api': apiTarget,
       '/ws': {
